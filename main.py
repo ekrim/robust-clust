@@ -65,10 +65,11 @@ class ConstrainedClustering(object):
 	data : the n x d data matrix
 	constraintMat : the m x 3 constraint matrix, where m is 
 			the total number of constraints. Each row 
-			contains the indices of the two samples 
-			involved in the constraint and a value 0 
+			contains the indices of the two samples	
+			involved in the constraint and a value 0
 			or 1 for CL or ML
-	constrainedSamps : array containing the indices of samples 			      involved in a constraint
+	constrainedSamps : array containing the indices of samples 
+         		   involved in a constraint
 	ML : each row contains must-link index pairs
 	CL : each row contains cannot-link index pairs
 	 
@@ -176,7 +177,8 @@ class ConstraintsToLabels(ConstrainedClustering):
 		       this contains the merges that occur during
 		       an unsupervised run of hierarchical clustering	
 		       of the data
-	labelSet : array containing the labels for all the samples		      contained in the array 'constrainedSamples'
+	labelSet : array containing the labels for all the samples		      
+		   contained in the array 'constrainedSamples'
 		   from the parent class
 	"""
 
@@ -241,7 +243,6 @@ class ConstraintsToLabels(ConstrainedClustering):
 		newLabels = bigLabelSet[self.constrainedSamps]
 		newLabels = translate_to_counting_numbers(newLabels)
 		self.labelSet = newLabels	
-		return 
 
 	def linkage_to_merges(self):
 		"""Hierarchical clustering returns a matrix of 
