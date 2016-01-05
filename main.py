@@ -4,6 +4,7 @@ import sklearn.datasets as ds
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.cluster import SpectralClustering
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import NearestNeighbors
 
 
 def distance_matrix(dataMatrix):
@@ -50,11 +51,12 @@ def plot_labels(data,labels):
 	classes = set(labels)
 	colors = plt.cm.Spectral(np.linspace(0,1,len(classes)))
 
-	f = plt.figure()	
 	for lab, col in zip(classes, colors):
 		ind = labels == lab
-		plt.plot( data[ind,0], data[ind,1], 'o', markerfacecolor=col, markersize=10)
-	f.show()
+		plt.plot(data[ind,0], data[ind,1], 'o', 
+			 markerfacecolor=col, 
+			 markersize=10)
+
 
 class ConstrainedClustering(object):
 	"""A class useful as a parent for  constrained clustering 
@@ -182,7 +184,7 @@ class ConstraintsToLabels(ConstrainedClustering):
 		   from the parent class
 	"""
 
-	def __init__(self, n_clusters, **kwargs): 
+	def __init__(self, n_clusters=None, **kwargs): 
 		super( ConstraintsToLabels, self).__init__(**kwargs)
 		self.n_clusters = n_clusters 
 		self.hierarchical = AgglomerativeClustering(linkage='average')
@@ -191,12 +193,16 @@ class ConstraintsToLabels(ConstrainedClustering):
 		"""Transform a set of pairwise constraints into a set of
 		labeled training data
 		"""
+		# Unsupervised hierarchical clustering
 		self.hierarchical.fit(self.data)
 		self.N,_ = self.data.shape
 		
 		self.labelSet = np.arange(0,self.constrainedSamps.size)
-		self.get_transitive_closure_classes()
+		# Find groups of constrained samples such that no CL 
+		# constraints are found within a single group
+		self.merge_labels()
 
+		
 		similarityMatrix = self.compute_similarities()
 		specClus = SpectralClustering(n_clusters=self.n_clusters,affinity='precomputed')
 		specClus.fit(similarityMatrix)
@@ -211,22 +217,123 @@ class ConstraintsToLabels(ConstrainedClustering):
 		uniqueLabels = np.unique(self.labelSet)
 		NuniqueLabels = uniqueLabels.size
 		
+		groupCenters = np.zeros((NuniqueLabels,self.data.shape[1]))
+		groupPop = np.zeros((NuniqueLabels,1))
 		plusMinusMat = np.zeros((NuniqueLabels,NuniqueLabels))
-		for i in range(NuniqueLabels-1):
+		for i in range(NuniqueLabels):
 			group1 = self.constrainedSamps[self.labelSet==i]
-			for ii in range(i+1,NuniqueLabels):
-				group2 = self.constrainedSamps[self.labelSet==ii]
-				Ncl = self.number_of_constraints(group1,group2,0)
-				Nml = self.number_of_constraints(group1,group2,1)
-				val = Nml - Ncl
-				plusMinusMat[i,ii] = val
-				plusMinusMat[ii,i] = val 
-
+			groupCenters[i,:] = np.mean(self.data[group1,:], axis=0)
+			groupPop[i] = group1.size
+			if i < (NuniqueLabels-1):
+				for ii in range(i+1,NuniqueLabels):
+					group2 = self.constrainedSamps[self.labelSet==ii]
+					Ncl = self.number_of_constraints(group1,group2,0)
+					Nml = self.number_of_constraints(group1,group2,1)
+					val = Nml - Ncl
+					plusMinusMat[i,ii] = val
+					plusMinusMat[ii,i] = val
+		
+		plusMinusMat = self.complete_matrix(groupCenters, plusMinusMat, 2)
+		self.plot_graph_cut_problem(groupCenters, groupPop, plusMinusMat)
 		simMat = 0.5*(np.tanh(plusMinusMat)+1)
 		simMat += 0.5*np.identity(NuniqueLabels)	
 		return simMat
+
+	def merge_viable(self ): 
+		pass
+
+	def plot_graph_cut_problem(self, centers, nodeName, simMat):
+		"""By using the agglomerative property of hierarchical 
+		clustering, samples involved in pairwise constraints
+		are grouped into an oversegmentation of the data. These
+		segments can be represented by nodes, with a net +/- sum 
+		of ML and CL constraints between them. Thus, we have a 
+		graph cut problem. 
+
+		This function plots the samples involved in constraints,
+		plots the nodes representing the agglomerated groups, marks
+		the number of samples associated with each node, and plots
+		lines representing the net constraint value between nodes 
+		with thickness proportional to the number of constraints.
+
+		Parameters
+		----------
+		centers - matrix containing node locations
+		nodeName - list containing the value that will be placed
+			   in each node 
+		simMat - similarity matrix between nodes (Nml - Ncl) 
+		"""
+		plt.figure()
+		uniquePairs = np.triu(simMat, k=1)
+		row,col = np.nonzero(uniquePairs)		
+		
+		# Plot the constrained samples
+		plot_labels(self.data[self.constrainedSamps,:],self.labelSet)	
+		
+		# Plot lines between nodes representing the number and type
+		# of constraints between them
+		maxSim = np.max(np.abs(simMat[row,col]))
+		for r,c in zip(row,col):
+			if simMat[r,c] > 0:
+				lineType = '-'
+				lineColor='b'
+			else:	
+				lineType = '--'
+				lineColor='r'
+			lineThick = np.abs(simMat[r,c])
+			lineThick *= 10/maxSim
+			
+			print np.max(lineThick)
+
+			plt.plot(centers[[r,c],0],centers[[r,c],1],lineType,
+			         color=lineColor,
+				 linewidth=lineThick)
+
+		# Plot the nodes themselves
+		plt.plot(centers[:,0], centers[:,1], 'o', 
+		         markersize=20,
+			 markerfacecolor=[0.7,0.7,0.7])
+		
+		# Put the population of the node in the center
+		for i, val in enumerate(nodeName):
+			plt.text(centers[i,0], centers[i,1], str(val),
+				 horizontalalignment='center',
+				 verticalalignment='center') 
+		plt.show()
 	
-	def get_transitive_closure_classes(self):
+	def complete_matrix(self, centers, simMat, k):
+		"""For the 'floating nodes' that are not connected to anything
+		else, add a weak ML connection to their nearest neighbors.
+		
+		Parameters
+		----------
+		centers - location of the centers of the nodes in the data space
+		simMat - similarity matrix represented by the +/- of the ML and
+		         CL total between nodes
+		k - number of nearest neighbors to look for
+			
+		Returns
+		-------
+		newSimMat - similarity matrix with some ML connections added
+		"""
+		assert k >= 1
+
+		nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(centers)
+		distances, indices = nbrs.kneighbors(centers)
+		newSimMat = simMat.copy()
+		for i in range(simMat.shape[0]):
+			if np.all(simMat[i,:]==0):
+				neighInd = indices[i,i:(k+1)]
+				newSimMat[i,neighInd] = 1
+				newSimMat[neighInd,i] = 1
+		return newSimMat
+
+	def merge_labels(self):
+		"""Given the merges of the hierarchical clustering, iterate 
+		through them from the lowest level to the highest level. Make
+		the labels of constrained samples the same if they are present
+		in the same merge group with no CL constraints violated.
+		"""
 		bigLabelSet = -np.ones((self.N,1))
 		bigLabelSet[self.constrainedSamps] = self.labelSet.reshape((-1,1))
 
@@ -236,8 +343,8 @@ class ConstraintsToLabels(ConstrainedClustering):
 			group1 = merge[0]
 			group2 = merge[1]
 			
-			allSamps = np.append( group1, group2)		
-			if not self.is_CL_violated( allSamps):	
+			allSamps = np.append(group1, group2)		
+			if not self.is_CL_violated(allSamps):	
 				bigLabelSet[group1] = bigLabelSet[group2[0]]
 		
 		newLabels = bigLabelSet[self.constrainedSamps]
@@ -270,11 +377,11 @@ if __name__ == '__main__':
 	np.set_printoptions(precision=2,suppress=True)	
 	
 	# Make some constaints	
-	constraintMat = ConstrainedClustering.make_constraints(labels,Nconstraints=50)
+	constraintMat = ConstrainedClustering.make_constraints(labels,Nconstraints=100)
 	ctlObj = ConstraintsToLabels(data=data, constraintMat=constraintMat, n_clusters=Nclusters)
 	ctlObj.fit_constrained()
 	trainLabels = ctlObj.labelSet
 	trainInd = ctlObj.constrainedSamps
 
-	ctlObj.plot_constraints()
+	#ctlObj.plot_constraints()
 	#plot_labels(data[trainInd,:],trainLabels)	
