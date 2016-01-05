@@ -132,27 +132,30 @@ class ConstrainedClustering(object):
 		otherSamp1 = self.other_sample_in_pair(group1,consVal)
 		isInGroup2 = ismember(group2,otherSamp1)
 		return np.sum(isInGroup2)
-
-	def plot_constraints(self):
+	
+	@staticmethod
+	def plot_constraints(data, constraintMat):
 		"""Plot the data (all grey) and the pairwise 
 		constraints
+
 		ML constraints will be solid lines, while CL 
 		constraints will be dashed lines
-		"""
+		"""		
 		plt.plot(data[:,0],data[:,1],'o',
 			 markerfacecolor=[0.7,0.7,0.7],
 			 markersize=5)
-		for ml in self.ML:
-			plt.plot(data[ml,0], data[ml,1], '-', 
-			 	 color='black', 
-				 linewidth=5)
-		for cl in self.CL:
-			plt.plot(data[cl,0], data[cl,1], '--',
+		for cons in constraintMat:
+			sampPair = cons[0:2]
+			if cons[2] == 1:
+				lineType = '-'
+			else:
+				lineType = '--'
+			plt.plot(data[sampPair,0], data[sampPair,1], lineType,
 				 color='black',
 				 linewidth=5)
 			
 	@staticmethod 
-	def make_constraints( labels, Nconstraints=None, errRate=0):
+	def make_constraints(labels, Nconstraints=None, errRate=0):
 		N = len(labels)
 		# Make random constraints, good for testing
 		if Nconstraints is None:
@@ -421,15 +424,15 @@ if __name__ == '__main__':
 	# Make some constaints	
 	constraintMat = ConstrainedClustering.make_constraints(labels,Nconstraints=Nconstraints)
 
+	# Plot the data along with the constraints
+	plt.figure()
+	ConstrainedClustering.plot_constraints(data, constraintMat)
+	plt.show()
+	
 	# Turn the pairwise constraints into labeled samples
 	ctlObj = ConstraintsToLabels(data=data, 
 				     constraintMat=constraintMat, 
                                      n_clusters=Nclusters)
-	# Plot the data along with the constraints
-	plt.figure()
-	ctlObj.plot_constraints()
-	plt.show()
-
 	ctlObj.fit_constrained()
 
 	# Now these labels and their associated index can be used
