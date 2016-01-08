@@ -8,6 +8,7 @@ from sklearn.neighbors import NearestNeighbors
 
 import constrained_clustering as cc
 
+
 class ConstraintsToLabels(cc.ConstrainedClustering):
 	"""Using the unsupervised structure of the data provided 
 	by a hierarchical clustering of the data, along with the 
@@ -25,9 +26,8 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		   contained in the array 'constrainedSamples'
 		   from the parent class
 	"""
-	def __init__(self, n_clusters=None, **kwargs): 
+	def __init__(self, **kwargs): 
 		super( ConstraintsToLabels, self).__init__(**kwargs)
-		self.n_clusters = n_clusters 
 		self.hierarchical = AgglomerativeClustering(linkage='average')
 	
 	def fit_constrained(self):

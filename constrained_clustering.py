@@ -3,17 +3,18 @@ import matplotlib.pyplot as plt
 import sklearn.datasets as ds
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.cluster import SpectralClustering
+from sklearn.cluster import KMeans
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import NearestNeighbors
 
 
-def distance_matrix(dataMatrix):
+def squared_distance_matrix(dataMatrix):
 	"""From the n x d data matrix, compute the n x n
 	distance matrix
 	"""
 	dataTrans = np.transpose(dataMatrix[:,:,None], (2,1,0))
 	diff = dataMatrix[:,:,None] - dataTrans
-	return np.sum( diff**2 )
+	return np.sum(diff**2, axis=1)
 
 
 def ismember(a,b):
@@ -96,8 +97,9 @@ class ConstrainedClustering(object):
 	    - Given the true set of labels for the dataset, 
 	      produce a set of synthetically generated constraints
 	"""
-	def __init__(self,data,constraintMat):
+	def __init__(self, data, constraintMat, n_clusters=None):
 		self.data = data
+		self.n_clusters = n_clusters
 
 		ML = self.constraints_by_value(constraintMat,1)
 		self.ML = np.append(ML,ML[:,-1::-1],axis=0)
@@ -172,3 +174,42 @@ class ConstrainedClustering(object):
 
 		constraintMat = np.append(queryMat,link,axis=1)
 		return constraintMat
+
+
+class SpectralLearning(ConstrainedClustering):
+	"""Kamvar "Spectral Learning"
+	"""	
+	def __init__(self, **kwargs):
+		super(SpectralLearning, self).__init__(**kwargs)
+		assert self.n_clusters is not None		
+
+	def fit_constrained(self):
+		self.get_affinity()	
+		self.apply_constraints()	
+		newData = self.laplacian_eig()
+		
+		kmeans = KMeans(n_clusters=self.n_clusters)	
+		kmeans.fit(newData)
+		self.labels = kmeans.labels_		
+			
+	def laplacian_eig(self):
+		rowSums = np.sum(self.affMat, axis=1)
+		dmax = np.max(rowSums)
+		D = np.diag(rowSums)
+		L = (self.affMat + dmax*np.eye(D.shape[0]) - D)/dmax
+		
+		values, vectors = np.linalg.eig(L)	
+		assert np.all( np.isreal(values) )
+		
+		bigEigInd = np.argsort(-values)
+		return vectors[:,bigEigInd[:self.n_clusters]]
+			
+	def apply_constraints(self):
+		self.affMat[self.ML[:,0], self.ML[:,1]] = 1
+		self.affMat[self.CL[:,0], self.CL[:,1]] = 0	
+
+	def get_affinity(self):
+		distMat = squared_distance_matrix(self.data)
+		sortMat = np.sort(distMat, axis=1)
+		kernSize = 10*np.mean(sortMat[:,1])
+		self.affMat = np.exp(-distMat/(2*kernSize**2))
