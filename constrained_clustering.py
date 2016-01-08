@@ -176,8 +176,27 @@ class ConstrainedClustering(object):
 		return constraintMat
 
 
+class COPKMeans(ConstrainedClustering):
+	"""COPKMeans by Wagstaff
+	"""
+	def __init__(self, Nit=100, **kwargs):
+		super(COPKMeans, self).__init__(**kwargs)
+		assert self.n_clusters is not None
+		self.Nit = Nit
+
+	def fit_constrained(self):
+		N = self.data.shape[0]
+		initInd = np.random.choice(np.arange(N), 
+					   self.n_clusters, 
+					   replace=True
+		self.centers = self.data[initInd,:]
+		self.labels = -np.ones(N)
+		for it in range(self.Nit):
+		
+
+
 class SpectralLearning(ConstrainedClustering):
-	"""Kamvar "Spectral Learning"
+	"""Spectral Learning by Kamvar
 	"""	
 	def __init__(self, **kwargs):
 		super(SpectralLearning, self).__init__(**kwargs)
