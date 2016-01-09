@@ -185,7 +185,8 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		"""
 		assert k >= 1
 		Nnodes = simMat.shape[0]
-		nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(centers)
+		nbrs = NearestNeighbors(n_neighbors=k+1, 
+					algorithm='ball_tree').fit(centers)
 		distances, indices = nbrs.kneighbors(centers)
 		newSimMat = simMat.copy()
 		for i in range(simMat.shape[0]):

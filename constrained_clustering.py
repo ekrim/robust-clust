@@ -17,6 +17,16 @@ def squared_distance_matrix(dataMatrix):
 	return np.sum(diff**2, axis=1)
 
 
+def get_affinity(data=None, distMat=None):
+	if distMat is None:
+		distMat = squared_distance_matrix(data)
+	sortMat = np.sort(distMat, axis=1)
+	kernSize = 7*np.mean(sortMat[:,1])
+	affMat = np.exp(-distMat/(2*kernSize**2))
+
+	return affMat
+
+
 def ismember(a,b):
 	"""Return an array with the same size of 'a' that 
 	indicates if an element of 'a' is in 'b'. Can be 
@@ -176,23 +186,55 @@ class ConstrainedClustering(object):
 		return constraintMat
 
 
-class COPKMeans(ConstrainedClustering):
-	"""COPKMeans by Wagstaff
+class E2CP(ConstrainedClustering):
+	"""Exhaustive and efficient constraint propagation by Lu
 	"""
-	def __init__(self, Nit=100, **kwargs):
-		super(COPKMeans, self).__init__(**kwargs)
+	def __init__(self, k_E2CP=15, alpha=0.6, **kwargs):
+		super(E2CP, self).__init__(**kwargs)
 		assert self.n_clusters is not None
-		self.Nit = Nit
+		self.k_E2CP = np.min([self.data.shape[0]-1, k_E2CP])
+		self.alpha = alpha
 
 	def fit_constrained(self):
 		N = self.data.shape[0]
-		initInd = np.random.choice(np.arange(N), 
-					   self.n_clusters, 
-					   replace=True
-		self.centers = self.data[initInd,:]
-		self.labels = -np.ones(N)
-		for it in range(self.Nit):
+		self.affMat = get_affinity(data=self.data)
+		nbrs = NearestNeighbors(n_neighbors=self.k_E2CP+1,
+				 algorithm='ball_tree').fit(self.data)
+		distances, indices = nbrs.kneighbors(self.data)
+		W = np.zeros(self.affMat.shape)
 		
+		ind1 = (np.arange(N).reshape((-1,1)) * np.ones((1,self.k_E2CP))).reshape(-1).astype('int')
+		ind2 = indices[:,1:].reshape(-1).astype('int')
+		W[ind1, ind2] = self.affMat[ind1, ind2] / (np.sqrt(self.affMat[ind1, ind1]) * np.sqrt(self.affMat[ind2, ind2]))
+		
+		W = (W+W.transpose())/2
+		Dsqrt = np.diag( np.sum(W, axis=1)**-0.5 )	
+		Lbar = np.dot(np.dot(Dsqrt, W), Dsqrt)
+		
+		Z = np.zeros(self.affMat.shape)
+		Z[self.ML[:,0], self.ML[:,1]] = 1
+		Z[self.CL[:,0], self.CL[:,1]] = -1
+	
+		Fv = np.zeros(Z.shape)
+		for i in range(50):
+			Fv = self.alpha*np.dot(Lbar, Fv) + (1-self.alpha)*Z
+	
+		Fh = np.zeros(Z.shape)
+		for i in range(50):
+			Fh = self.alpha*np.dot(Fh, Lbar) + (1-self.alpha)*Fv
+
+		Fbar = Fh / np.max( np.abs( Fh.reshape(-1) ) )
+		
+		Wbar = np.zeros(self.affMat.shape)
+		mlInd = Fbar >= 0
+		Wbar[mlInd] = 1 - (1 - Fbar[mlInd]) * (1 - W[mlInd])
+		clInd = Fbar < 0
+		Wbar[clInd] = (1 + Fbar[clInd]) * W[clInd]		
+		
+		specClus = SpectralClustering(n_clusters=self.n_clusters,
+					      affinity='precomputed')
+		specClus.fit(Wbar)
+		self.labels = specClus.labels_
 
 
 class SpectralLearning(ConstrainedClustering):
@@ -203,7 +245,7 @@ class SpectralLearning(ConstrainedClustering):
 		assert self.n_clusters is not None		
 
 	def fit_constrained(self):
-		self.get_affinity()	
+		self.affMat = get_affinity(data=self.data)	
 		self.apply_constraints()	
 		newData = self.laplacian_eig()
 		
@@ -227,8 +269,3 @@ class SpectralLearning(ConstrainedClustering):
 		self.affMat[self.ML[:,0], self.ML[:,1]] = 1
 		self.affMat[self.CL[:,0], self.CL[:,1]] = 0	
 
-	def get_affinity(self):
-		distMat = squared_distance_matrix(self.data)
-		sortMat = np.sort(distMat, axis=1)
-		kernSize = 10*np.mean(sortMat[:,1])
-		self.affMat = np.exp(-distMat/(2*kernSize**2))
