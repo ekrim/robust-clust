@@ -178,7 +178,7 @@ class ConstrainedClustering(object):
 		queryMat = np.random.randint(0,N,(Nconstraints,2))
 		link = (labels[queryMat[:,0]] == labels[queryMat[:,1]])+0
 		# The samples whose link values we will invert
-		errorInd = np.random.choice(2,Nconstraints,p=[1-errRate,errRate])		
+		errorInd = np.random.choice(2,Nconstraints,p=[1-errRate,errRate]).astype('bool')	
 		link = link.reshape((-1,1))
 		link[errorInd,:] = 2 - np.power(2,link[errorInd,:])
 

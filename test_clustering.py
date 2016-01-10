@@ -6,7 +6,7 @@ from sklearn.metrics import adjusted_rand_score as ari
 import constrained_clustering as cc
 
 
-Nclusters, N, Nconstraints = (3, 500, 10000)
+Nclusters, N, Nconstraints = (3, 500, 500)
 data, labels = ds.make_blobs(n_samples=N,
 			     n_features=2,
 			     centers=Nclusters)

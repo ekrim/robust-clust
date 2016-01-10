@@ -48,7 +48,6 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		newLabels = self.merge_nodes()
 		self.translate_labels(newLabels)
 
-
 	def merge_nodes(self):
 		"""We have an oversegmentation of the constrained points we wish
 		to assign labels to, represented by the attribute self.labelSet.
@@ -63,7 +62,7 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		groupCenters = np.zeros((NuniqueLabels,self.data.shape[1]))
 		groupPop = np.zeros((NuniqueLabels,1))
 		# simMat contains the Nml - Ncl net constraint value
-		simMat = np.zeros((NuniqueLabels,NuniqueLabels))
+		self.simMat = np.zeros((NuniqueLabels,NuniqueLabels))
 		# Loop over the node labels
 		for i in range(NuniqueLabels):
 			group1 = self.constrainedSamps[self.labelSet==i]
@@ -76,42 +75,73 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 					Ncl = self.number_of_constraints(group1,group2,0)
 					Nml = self.number_of_constraints(group1,group2,1)
 					val = Nml - Ncl
-					simMat[i,ii] = val
-					simMat[ii,i] = val
-		Nneigh = 2
-		if groupCenters.shape[0] > (Nneigh*2):
-			simMat = self.complete_matrix(groupCenters, simMat, 2)
-		self.plot_graph_cut_problem(groupCenters, groupPop, simMat)
-		return self.graph_cut_approx(simMat)
+					self.simMat[i,ii] = val
+					self.simMat[ii,i] = val
+		#Nneigh = 2
+		#if groupCenters.shape[0] > (Nneigh*2):
+		#	self.complete_matrix(groupCenters, 2)
+		self.plot_graph_cut_problem(groupCenters, groupPop)
+		
+		centerDists = cc.squared_distance_matrix(groupCenters)
+		return self.graph_cut_approx(centerDists)
 
-	def graph_cut_approx(self, simMat):
+	def graph_cut_approx(self, centerDists):
 		"""Find which of the nodes will merge based on the +/- constraint
 		values between nodes. This is a very simple implementation, and will
 		not produce a proper graph cut solution. Basically, we just merge
 		two nodes if there is a net positive ML between them.
 		"""
-		Nnodes = simMat.shape[0]
+		Nnodes = self.simMat.shape[0]
 		newLabels = np.arange(Nnodes)
-		while True:
-			maxInd = np.argmax(simMat) 
-			r, c = np.unravel_index(maxInd, simMat.shape)
-			maxVal = simMat[r,c]
+		Ngroups = Nnodes
+		
+		self.simMat += np.diag(-np.inf*np.ones(Nnodes))		
+
+		keepLooping = True
+		while keepLooping:
+			maxInd = np.argmax(self.simMat) 
+			r, c = np.unravel_index(maxInd, self.simMat.shape)
+			maxVal = self.simMat[r,c]			
 			if maxVal > 0:
 				newLabels[newLabels==newLabels[c]] = newLabels[r]
-				simMat[c,:] += simMat[r,:]
-				simMat[:,c] = simMat[c,:]
-				simMat[r,:] = -1*np.ones(Nnodes)
-				simMat[:,r] = -1*np.ones(Nnodes)
-				simMat[c,c] = 0
+				self.merge_columns(r, c)
+				Ngroups -= 1
+			elif self.n_clusters is not None:
+				if maxVal==-np.inf:
+					keepLooping = False
+				elif Ngroups > self.n_clusters:
+					if maxVal==0:
+						r,c = self.break_tie_zero(centerDists)			
+					newLabels[newLabels==newLabels[c]] = newLabels[r]
+					self.merge_columns(r, c)	
+					Ngroups -= 1	
+				else:
+					keepLooping = False
 			else:
-				break
-			if self.n_clusters is not None:
-				Ngroups = np.unique(newLabels).size
-				if Ngroups <= self.n_clusters:	
-					break	
+				keepLooping = False
 		return newLabels
-
-	def plot_graph_cut_problem(self, centers, nodeName, simMat):
+	
+	def break_tie_zero(self, centerDists):
+		"""This is just an approx because when two centers merge
+		I am not adjusting the centerDists. If it doesn't work we
+		can fix it
+		"""
+		r,c = np.triu_indices(self.simMat.shape[0], 1)
+		zeroInd = self.simMat[r,c]==0	
+		rowZero = r[zeroInd]
+		colZero = c[zeroInd]
+		zeroDists = centerDists[rowZero, colZero]	
+		bestPair = np.argmin(zeroDists)	
+		return rowZero[bestPair], colZero[bestPair]	
+			
+	def merge_columns(self, r, c):
+		self.simMat[c,:] += self.simMat[r,:]
+		self.simMat[:,c] = self.simMat[c,:]
+		self.simMat[r,:] = -np.inf
+		self.simMat[:,r] = -np.inf
+		self.simMat[c,c] = -np.inf
+		
+	def plot_graph_cut_problem(self, centers, nodeName):
 		"""By using the agglomerative property of hierarchical 
 		clustering, samples involved in pairwise constraints
 		are grouped into an oversegmentation of the data. These
@@ -130,26 +160,25 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		centers - matrix containing node locations
 		nodeName - list containing the value that will be placed
 			   in each node 
-		simMat - similarity matrix between nodes (Nml - Ncl) 
 		"""
 		plt.figure()
-		uniquePairs = np.triu(simMat, k=1)
+		uniquePairs = np.triu(self.simMat, k=1)
 		row,col = np.nonzero(uniquePairs)		
 		
 		# Plot the constrained samples
-		cc.plot_labels(self.data[self.constrainedSamps,:],self.labelSet)	
+		cc.plot_labels(self.data[self.constrainedSamps,:],self.labelSet)
 		
 		# Plot lines between nodes representing the number and type
 		# of constraints between them
-		maxSim = np.max(np.abs(simMat[row,col]))
+		maxSim = np.max(np.abs(self.simMat[row,col]))
 		for r,c in zip(row,col):
-			if simMat[r,c] > 0:
+			if self.simMat[r,c] > 0:
 				lineType = '-'
 				lineColor='b'
 			else:	
 				lineType = '--'
 				lineColor='r'
-			lineThick = np.abs(simMat[r,c])
+			lineThick = np.abs(self.simMat[r,c])
 			lineThick *= 10/maxSim
 			
 			plt.plot(centers[[r,c],0],centers[[r,c],1],lineType,
@@ -168,34 +197,27 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 				 verticalalignment='center') 
 		plt.show()
 	
-	def complete_matrix(self, centers, simMat, k):
+	def complete_matrix(self, centers, k):
 		"""For the 'floating nodes' that are not connected to anything
 		else, add a weak ML connection to their nearest neighbors.
 		
 		Parameters
 		----------
 		centers - location of the centers of the nodes in the data space
-		simMat - similarity matrix represented by the +/- of the ML and
-		         CL total between nodes
 		k - number of nearest neighbors to look for
-			
-		Returns
-		-------
-		newSimMat - similarity matrix with some ML connections added
 		"""
 		assert k >= 1
-		Nnodes = simMat.shape[0]
+		Nnodes = self.simMat.shape[0]
 		nbrs = NearestNeighbors(n_neighbors=k+1, 
 					algorithm='ball_tree').fit(centers)
 		distances, indices = nbrs.kneighbors(centers)
-		newSimMat = simMat.copy()
-		for i in range(simMat.shape[0]):
+		oldSimMat = self.simMat.copy()
+		for i in range(self.simMat.shape[0]):
 			neighInd = np.zeros((1,Nnodes)) > 0
 			neighInd[:,indices[i,1:(k+1)]] = True
-			neighInd = (neighInd & (simMat[i,:]==0)).reshape((-1,))
-			newSimMat[i,neighInd] = 1
-			newSimMat[neighInd,i] = 1			
-		return newSimMat
+			neighInd = (neighInd & (oldSimMat[i,:]==0)).reshape((-1,))
+			self.simMat[i,neighInd] = 1
+			self.simMat[neighInd,i] = 1			
 
 	def translate_labels(self, newLabels):
 		"""We have clustered nodes, so we need to reflect these changes
@@ -247,9 +269,9 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 
 if __name__ == '__main__':
 	# Parameters---------------------------------------
-	Nclusters = 3
+	Nclusters = 4
 	N = 1000
-	Nconstraints = 30
+	Nconstraints = 100
 	#---------------------------------------------------
 	# Make some synthetic data
 	data, labels = ds.make_blobs(n_samples=N, 
@@ -257,7 +279,9 @@ if __name__ == '__main__':
                                      centers=Nclusters)
 	
 	# Make some constaints	
-	constraintMat = cc.ConstrainedClustering.make_constraints(labels,Nconstraints=Nconstraints)
+	constraintMat = cc.ConstrainedClustering.make_constraints(labels,
+						Nconstraints=Nconstraints,
+						errRate=0.0)
 
 	# Plot the data along with the constraints
 	plt.figure()
