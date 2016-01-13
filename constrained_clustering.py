@@ -27,7 +27,7 @@ def get_affinity(data=None, distMat=None):
 	return affMat
 
 
-def ismember(a,b):
+def ismember(a, b):
 	"""Return an array with the same size of 'a' that 
 	indicates if an element of 'a' is in 'b'. Can be 
 	used as an index for slicing since it contains bool 
