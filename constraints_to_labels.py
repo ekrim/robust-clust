@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 import sklearn.datasets as ds
@@ -5,6 +6,8 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.cluster import SpectralClustering
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import NearestNeighbors
+from sklearn import svm
+from sklearn.ensemble import RandomForestClassifier
 
 import constrained_clustering as cc
 
@@ -26,10 +29,11 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		   contained in the array 'constrainedSamples'
 		   from the parent class
 	"""
-	def __init__(self, **kwargs): 
+	def __init__(self, classifier='svm', **kwargs): 
 		super( ConstraintsToLabels, self).__init__(**kwargs)
+		self.classifier = classifier
 		self.hierarchical = AgglomerativeClustering(linkage='average')
-	
+
 	def fit_constrained(self):
 		"""Transform a set of pairwise constraints into a set of
 		labeled training data
@@ -48,6 +52,20 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		newLabels = self.merge_nodes()
 		self.translate_labels(newLabels)
 
+		# Use a simple kNN classifier with the converted pairwise
+		# constraints to return a clustering for the data
+		
+		if self.classifier == 'knn':
+			clf = KNeighborsClassifier(n_neighbors=1)
+		elif self.classifier == 'svm':
+			clf = svm.SVC(decision_function_shape='ovr')
+		elif self.classifier == 'forest':
+			clf = RandomForestClassifier(n_estimators=25)
+		if np.unique(self.labelSet).size==1:
+			print self.CL.shape[0], 'CL constraints, not enough'
+		clf.fit(self.data[self.constrainedSamps,:], self.labelSet)
+		self.labels = clf.predict(self.data)
+		
 	def merge_nodes(self):
 		"""We have an oversegmentation of the constrained points we wish
 		to assign labels to, represented by the attribute self.labelSet.
@@ -64,8 +82,11 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		# simMat contains the Nml - Ncl net constraint value
 		self.simMat = np.zeros((NuniqueLabels,NuniqueLabels))
 		# Loop over the node labels
+		storeGroups = []
 		for i in range(NuniqueLabels):
 			group1 = self.constrainedSamps[self.labelSet==i]
+			storeGroups += [group1]
+
 			groupCenters[i,:] = np.mean(self.data[group1,:], axis=0)
 			groupPop[i] = group1.size
 			if i < (NuniqueLabels-1):
@@ -80,12 +101,13 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		#Nneigh = 2
 		#if groupCenters.shape[0] > (Nneigh*2):
 		#	self.complete_matrix(groupCenters, 2)
-		self.plot_graph_cut_problem(groupCenters, groupPop)
+
+		#self.plot_graph_cut_problem(groupCenters, groupPop)
 		
 		centerDists = cc.squared_distance_matrix(groupCenters)
-		return self.graph_cut_approx(centerDists)
+		return self.graph_cut_approx(centerDists, storeGroups)
 
-	def graph_cut_approx(self, centerDists):
+	def graph_cut_approx(self, centerDists, storeGroups):
 		"""Find which of the nodes will merge based on the +/- constraint
 		values between nodes. This is a very simple implementation, and will
 		not produce a proper graph cut solution. Basically, we just merge
@@ -96,30 +118,38 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 		Ngroups = Nnodes
 		
 		self.simMat += np.diag(-np.inf*np.ones(Nnodes))		
-
 		keepLooping = True
 		while keepLooping:
 			maxInd = np.argmax(self.simMat) 
 			r, c = np.unravel_index(maxInd, self.simMat.shape)
-			maxVal = self.simMat[r,c]			
-			if maxVal > 0:
+			maxVal = self.simMat[r,c]
+			correctNclusters = False
+			if self.n_clusters is not None:
+				correctNclusters = self.n_clusters>=Ngroups		
+			if maxVal > 0 and not correctNclusters:
 				newLabels[newLabels==newLabels[c]] = newLabels[r]
 				self.merge_columns(r, c)
+				storeGroups[c] = np.append(storeGroups[c], storeGroups[r])
 				Ngroups -= 1
-			elif self.n_clusters is not None:
+			elif self.n_clusters is not None and maxVal >= 0:
 				if maxVal==-np.inf:
 					keepLooping = False
 				elif Ngroups > self.n_clusters:
 					if maxVal==0:
-						r,c = self.break_tie_zero(centerDists)			
+						r,c = self.break_tie_zero(centerDists)
 					newLabels[newLabels==newLabels[c]] = newLabels[r]
 					self.merge_columns(r, c)	
+					storeGroups[c] = np.append(storeGroups[c], storeGroups[r])
 					Ngroups -= 1	
 				else:
 					keepLooping = False
 			else:
 				keepLooping = False
 		return newLabels
+	
+	def quick_hist(self, a):
+		binEdges = np.append(np.unique(a), [np.inf])
+		return np.histogram(a, bins=binEdges)
 	
 	def break_tie_zero(self, centerDists):
 		"""This is just an approx because when two centers merge
@@ -196,7 +226,7 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 				 horizontalalignment='center',
 				 verticalalignment='center') 
 		plt.show()
-	
+
 	def complete_matrix(self, centers, k):
 		"""For the 'floating nodes' that are not connected to anything
 		else, add a weak ML connection to their nearest neighbors.
@@ -270,18 +300,22 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
 if __name__ == '__main__':
 	# Parameters---------------------------------------
 	Nclusters = 4
-	N = 1000
-	Nconstraints = 100
+	N = 500
+	Nconstraints = 500
 	#---------------------------------------------------
 	# Make some synthetic data
 	data, labels = ds.make_blobs(n_samples=N, 
 				     n_features=2, 
-                                     centers=Nclusters)
+                                     centers=Nclusters,
+				     center_box=(0,8))
 	
 	# Make some constaints	
 	constraintMat = cc.ConstrainedClustering.make_constraints(labels,
 						Nconstraints=Nconstraints,
 						errRate=0.0)
+	ML = constraintMat[constraintMat[:,2]==1,:]
+	CL = constraintMat[constraintMat[:,2]==0,:]
+	constraintMat = np.concatenate((ML[0:30,:], CL[:50,:]), axis=0)
 
 	# Plot the data along with the constraints
 	plt.figure()

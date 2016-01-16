@@ -8,11 +8,14 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import NearestNeighbors
 
 
-def squared_distance_matrix(dataMatrix):
+def squared_distance_matrix(dataMatrix, dataMatrix2=None):
 	"""From the n x d data matrix, compute the n x n
 	distance matrix
 	"""
-	dataTrans = np.transpose(dataMatrix[:,:,None], (2,1,0))
+	if dataMatrix2 is not None:
+		dataTrans = np.transpose(dataMatrix2[:,:,None], (2,1,0)) 
+	else:
+		dataTrans = np.transpose(dataMatrix[:,:,None], (2,1,0))
 	diff = dataMatrix[:,:,None] - dataTrans
 	return np.sum(diff**2, axis=1)
 
@@ -71,6 +74,111 @@ def plot_labels(data,labels=None):
 		plt.plot(data[:,0], data[:,1], 'o',
 			 markerfacecolor=[0.7, 0.7, 0.7],
 			 markersize=10)
+
+
+def FFQS(labels, distMat, Nclass, Nconstraints):
+	N = distMat.shape[0]
+	nbrLabel = np.zeros(N)
+	ind = np.arange(N)
+	nbrLabel[np.random.random_integers(0,N-1,1)] = 1
+	querCnt = 0
+	constraintMat = np.zeros((Nconstraints,3))
+	foundAll = False
+	while querCnt < Nconstraints and (not foundAll):
+		nbrInd = ind[nbrLabel > 0]
+		candInd = ind[nbrLabel==0]
+		block = distMat[nbrInd,:][:,candInd]
+		minDist = np.min(block, axis=0)
+		farInd = np.argmax(minDist)
+		newPt = candInd[farInd]
+
+		constraint = False
+		nbrCnt = 1
+		while (not constraint) and (nbrCnt <= np.max(nbrLabel)):
+			thisHood = ind[nbrLabel==nbrCnt]
+			constraint = labels[newPt]==labels[thisHood[0]]
+			if querCnt < Nconstraints:
+				constraintMat[querCnt,:] = [newPt, thisHood[0], constraint]
+			querCnt += 1
+			nbrCnt += 1
+		if constraint:
+			nbrLabel[newPt] = nbrCnt - 1
+		else:	
+			nbrLabel[newPt] = np.max(nbrLabel)+1
+		uniqueNbr = np.setdiff1d(np.unique(nbrLabel),[0])
+		if uniqueNbr.size==Nclass:
+			foundAll = True
+	return constraintMat, nbrLabel
+
+
+def MMFFQS(labels, distMat, Nconstraints):
+	Nclass = np.unique(labels).size
+	N = distMat.shape[0]
+	
+	sortDist = np.sort(distMat, axis=1)
+	kernel = 2*np.median(sortDist[:,2])
+	simMat = np.exp(-distMat**2/(2*(kernel**2)))
+	constraintMat, clusLabel = FFQS(labels, distMat, Nclass, Nconstraints)
+	constraintMat.astype('int')	
+	allInd = np.arange(N)
+	exploreConstraints = constraintMat[constraintMat[:,0]!=0, 0:2].astype('int')
+	skeletonInd = np.unique(exploreConstraints.reshape(-1))
+	queryCnt = exploreConstraints.shape[0]
+
+	clus = np.unique(np.setdiff1d(clusLabel,[0]))
+	while queryCnt < Nconstraints:
+		candidateInd = np.setdiff1d(allInd, skeletonInd)
+		if candidateInd.size > 0:
+			candSimToSkele = np.max(simMat[skeletonInd,:][:,candidateInd], axis=0)	
+			qInd = np.argmin(candSimToSkele)
+			q = candidateInd[qInd]
+		else:
+			q = np.random.random_integers(0,N-1,1)
+		Nclus = clus.size
+		simVec = np.zeros(Nclus)
+		indVec = np.zeros(Nclus)
+		for k in range(Nclus):
+			ind_k = allInd[clusLabel==clus[k]]
+			simInd = np.argmax(simMat[q, ind_k])
+			simVec[k] = simMat[q, ind_k][simInd]
+			indVec[k] = ind_k[simInd]
+		sortInd = np.argsort(-simVec)
+		indVec = indVec[sortInd]
+		for k in range(Nclus):
+			link = labels[q]==labels[indVec[k]]
+			constraintMat[queryCnt,:] = [q, indVec[k], link]
+			queryCnt += 1
+			if link:
+				clusLabel[q] = clusLabel[indVec[k]]
+				break
+			if k==Nclus:
+				clusLabel[q] = np.max(clus) + 1
+			if queryCnt==Nconstraints:
+				break
+		skeletonInd = np.append(skeletonInd, q)
+	
+	return constraintMat[:,0:2], clusLabel
+
+
+def all_pairwise(labelSet):
+	N = labelSet.size
+	clusList = np.setdiff1d(np.unique(labelSet), [0])
+	allInd = np.arange(N)
+	allConstrained = allInd[labelSet>0]
+	bigConstraintMat = np.zeros((0,3))
+	for i in clusList:
+		thisClus = allInd[labelSet==i]
+		otherClus = np.setdiff1d(allConstrained, thisClus)
+		x, y = np.meshgrid(thisClus, thisClus)
+		x = x.reshape((-1,1))
+		y = y.reshape((-1,1))
+		mlBlock = np.concatenate((x,y,np.ones(x.shape)), axis=1)
+		x, y = np.meshgrid(thisClus, otherClus)
+		x = x.reshape((-1,1))
+		y = y.reshape((-1,1))
+		clBlock = np.concatenate((x,y,np.zeros(x.shape)), axis=1)
+		bigConstraintMat = np.concatenate((bigConstraintMat,mlBlock,clBlock), axis=0)
+	return bigConstraintMat
 
 
 class ConstrainedClustering(object):
@@ -164,10 +272,10 @@ class ConstrainedClustering(object):
 				lineType = '--'
 			plt.plot(data[sampPair,0], data[sampPair,1], lineType,
 				 color='black',
-				 linewidth=5)
+				 linewidth=3)
 			
 	@staticmethod 
-	def make_constraints(labels, Nconstraints=None, errRate=0):
+	def make_constraints(labels, data=None, method='rand', Nconstraints=None, errRate=0):
 		N = len(labels)
 		# Make random constraints, good for testing
 		if Nconstraints is None:
@@ -175,15 +283,21 @@ class ConstrainedClustering(object):
 			Nconstraints = len(labels)/2
 
 		# Just the pairs of indices involved in each constraint
-		queryMat = np.random.randint(0,N,(Nconstraints,2))
-		link = (labels[queryMat[:,0]] == labels[queryMat[:,1]])+0
+		if method=='mmffqs':
+			distMat = np.sqrt(squared_distance_matrix(data))
+			queryMat, clusLabel = MMFFQS(labels, distMat, Nconstraints)
+			bigConstraintMat = all_pairwise(clusLabel)
+		else:
+			queryMat = np.random.randint(0,N,(Nconstraints,2))
+		queryMat = queryMat.astype(int)
+		link = (labels[queryMat[:,0]] == labels[queryMat[:,1]])+0	
 		# The samples whose link values we will invert
 		errorInd = np.random.choice(2,Nconstraints,p=[1-errRate,errRate]).astype('bool')	
 		link = link.reshape((-1,1))
 		link[errorInd,:] = 2 - np.power(2,link[errorInd,:])
 
 		constraintMat = np.append(queryMat,link,axis=1)
-		return constraintMat
+		return constraintMat.astype(int), bigConstraintMat.astype(int)
 
 
 class E2CP(ConstrainedClustering):
@@ -269,3 +383,13 @@ class SpectralLearning(ConstrainedClustering):
 		self.affMat[self.ML[:,0], self.ML[:,1]] = 1
 		self.affMat[self.CL[:,0], self.CL[:,1]] = 0	
 
+
+if __name__=='__main__':
+	Nclusters, N, Nconstraints = (3, 100, 40)
+	data,labels = ds.make_blobs(n_samples=N, n_features=2, centers=Nclusters)
+	
+	constraintMat = ConstrainedClustering.make_constraints(labels, data=data, method='mmffqs', Nconstraints=Nconstraints, errRate=0)
+	
+	plt.figure()
+	ConstrainedClustering.plot_constraints(data, constraintMat)
+	plt.show()
