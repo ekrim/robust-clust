@@ -7,12 +7,23 @@ import constrained_clustering as cc
 
 
 class ImperfectOracles(cc.ConstrainedClustering):
+	"""Given a set of constraints and a dataset, determine
+	which ones are harmful to the clustering process. This
+	is determined by analyzing the disagreement within the 
+	constraint set. We build an ensemble of unsupervised 
+	clusterings. If two constraints can be mutually satisfied
+	at some point in that ensemble, then they vote for each 
+	other. Only constraints in the same local regions can vote
+	for one another. A measure of 'trust' is computed based
+	on votes, and it is calculated iteratively to reveal the 
+	constraints which should be kept. 
+	"""
 	def __init__(self, threshold=0.8, **kwargs):
 		super(ImperfectOracles, self).__init__(**kwargs)
 		self.threshold = threshold
 		self.constraintMat = kwargs['constraintMat'] 
 	
-	def remove_constraints(self):
+	def remove_constraints(self):	
 		Ncons = self.constraintMat.shape[0]
 		self.voteEligible = np.zeros((Ncons,Ncons))
 		
@@ -21,7 +32,7 @@ class ImperfectOracles(cc.ConstrainedClustering):
 			
 		CL = self.CL[:self.CL.shape[0]/2,:]
 		ML = self.ML[:self.ML.shape[0]/2,:]
-		for i in range(6):
+		for i in range(4):
 			representation = self.data
 			if i==0: 
 				clus = KMeans(n_clusters=self.n_clusters)
@@ -31,15 +42,18 @@ class ImperfectOracles(cc.ConstrainedClustering):
 			elif i==2:
 				clus = MeanShift()
 			elif i==3:
-				clus = AffinityPropagation()
-			elif i==4:
 				clus = AgglomerativeClustering(n_clusters=self.n_clusters, linkage='average')
-			elif i==5:
+			"""elif i==4:
 				distMat = np.sqrt(cc.squared_distance_matrix(self.data))
 				meanNN = np.mean(np.sort(distMat, axis=1)[:,1])
 				clus = DBSCAN(eps=4*meanNN, min_samples=5 )
+			"""
 			labs = clus.fit_predict(representation)
-
+			
+			"""plt.figure()
+			cc.plot_labels(self.data, labels=labs)
+			plt.show()
+			"""
 			self.determine_relevance(labs)
 
 			connMat = labs[:,None]==labs[None,:]
@@ -74,10 +88,11 @@ class ImperfectOracles(cc.ConstrainedClustering):
 
 	def plot_removal(self, trueLabels, keepInd):
 		errInd = self.find_errors(trueLabels, keepInd)
+
 		# The ones we kept
 		plt.subplot(2,2,1)
-		cc.ConstrainedClustering.plot_constraints(self.data, self.constraintMat[keepInd,:])
-		plt.title('Constraints we kept')		
+		cc.plot_labels(self.data, labels=trueLabels)
+		plt.title('True grouping')		
 
 		# Errors
 		plt.subplot(2,2,2)
@@ -133,6 +148,7 @@ if __name__=='__main__':
 			     constraintMat=constraintMat,
 			     n_clusters=Nclusters)
 	keepInd = a.remove_constraints()
+
 	plt.figure()
 	a.plot_removal(labels, keepInd)
 	plt.tight_layout()
