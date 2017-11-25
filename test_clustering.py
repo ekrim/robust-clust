@@ -41,28 +41,34 @@ for iData, fileName in enumerate(datasetList):
   baseline = nmi(labels, kmeans.labels_)
   for iCons, consFrac in enumerate(consFracVec):
     Nconstraints = np.round(N*consFrac)
-  
+ 
     ariVec = np.zeros(2)
     for it in range(Ntrial):  
-      constraintMat, bigConstraintMat = cc.ConstrainedClustering.make_constraints(labels, 
-              data=data,
-              method=activeLearning,
-              Nconstraints=Nconstraints,
-              errRate=errRate)
+      constraintMat, bigConstraintMat = cc.ConstrainedClustering.make_constraints(
+        labels, 
+        data=data,
+        method=activeLearning,
+        Nconstraints=Nconstraints,
+        errRate=errRate
+      )
     
       # Constraints-to-labels
-      ctlObj = ctl.ConstraintsToLabels(classifier='svm',
-             data=data,
-             constraintMat=bigConstraintMat,
-             n_clusters=Nclusters)
+      ctlObj = ctl.ConstraintsToLabels(
+        classifier='svm',
+        data=data,
+        constraintMat=bigConstraintMat,
+        n_clusters=Nclusters
+      )
       ctlObj.fit_constrained()
       ctlLabels = ctlObj.labels
       ariVec[0] += nmi(labels, ctlLabels)
 
       # E2CP
-      e2cp = cc.E2CP(data=data, 
-             constraintMat=bigConstraintMat, 
-             n_clusters=Nclusters)
+      e2cp = cc.E2CP(
+        data=data, 
+        constraintMat=bigConstraintMat, 
+        n_clusters=Nclusters
+      )
       e2cp.fit_constrained()
       e2cpLabels = e2cp.labels
       ariVec[1] += nmi(labels, e2cpLabels)

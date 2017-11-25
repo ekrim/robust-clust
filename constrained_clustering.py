@@ -54,7 +54,7 @@ def translate_to_counting_numbers(a):
   uniqueElements = np.unique(a)
   
   boolBlock = a.reshape((-1,1)) == uniqueElements.reshape((1,-1))
-   newValueInMatrix = boolBlock.astype(int) * np.arange(uniqueElements.size)  
+  newValueInMatrix = boolBlock.astype(int) * np.arange(uniqueElements.size)  
   return np.sum(newValueInMatrix,axis=1)
 
 
