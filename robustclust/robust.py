@@ -1,12 +1,18 @@
 import numpy as np
-from sklearn.cluster import KMeans, SpectralClustering, MeanShift, AffinityPropagation, AgglomerativeClustering, DBSCAN
-from sklearn.metrics.cluster import normalized_mutual_info_score as nmi
-import sklearn.datasets as ds
-from sklearn.neighbors import NearestNeighbors
-from sklearn import svm
-from sklearn.ensemble import RandomForestClassifier
 import matplotlib.pyplot as plt
-import constrained_clustering as cc
+import sklearn.datasets as ds
+from sklearn import svm
+from sklearn.neighbors import NearestNeighbors
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics.cluster import normalized_mutual_info_score as nmi
+from sklearn.cluster import KMeans, \
+                            SpectralClustering, \
+                            MeanShift, \
+                            AffinityPropagation, \
+                            AgglomerativeClustering, \
+                            DBSCAN
+
+from . import constrained as cc
 
 
 class ImperfectOracles(cc.ConstrainedClustering):
@@ -422,6 +428,7 @@ class ConstraintsToLabels(cc.ConstrainedClustering):
       group2 = self.hierarchical.children_[i,1]
       clusMem += [np.append( clusMem[group1], clusMem[group2])]
       yield [clusMem[group1], clusMem[group2]]    
+
 
 if __name__ == '__main__':
   # Parameters---------------------------------------
