@@ -3,11 +3,15 @@ import matplotlib.pyplot as plt
 import sklearn.datasets as ds
 from sklearn.cluster import AgglomerativeClustering
 
-from .utils import pdist_idx, pdist_block, affinity
-from robustclust import plot_labels
+from .utils import pdist_idx, \
+                   pdist_block, \
+                   affinity, \
+                   all_pairwise
+from robustclust import plot_labels, \
+                        plot_constraints
 
 
-def make_constraints(labels, pdist_vec, method='rand', num_constraints=None, err_rate=0):
+def get_constraints(labels, pdist_vec, method='rand', num_constraints=None, err_rate=0):
   N = labels.size
 
   # half the number of samples is a good baseline
@@ -17,11 +21,16 @@ def make_constraints(labels, pdist_vec, method='rand', num_constraints=None, err
     query_mat, clus_label = MMFFQS(labels, pdist_vec, num_constraints)
     big_constraint_mat = all_pairwise(clus_label)
 
+  if method == 'ffqs':
+    query_mat, clus_label = FFQS(labels, pdist_vec, num_constraints)
+    big_constraint_mat = all_pairwise(clus_label)
+
   elif method == 'rand':
     query_mat = np.random.randint(0, N, (num_constraints,2))
+    big_constraint_mat = None
  
   else:
-    raise False, 'no such method'
+    assert False, 'no such method'
 
   query_mat = query_mat.astype(int)
   link = (labels[query_mat[:,0]] == labels[query_mat[:,1]])+0  
@@ -32,7 +41,7 @@ def make_constraints(labels, pdist_vec, method='rand', num_constraints=None, err
   link[error_ind,:] = 2 - np.power(2, link[error_ind,:])
 
   constraint_mat = np.append(query_mat,link,axis=1)
-  return constraint_mat.astype(int), big_constraint_mat.astype(int)
+  return constraint_mat.astype(int), big_constraint_mat
 
 
 def FFQS(labels, pdist_vec, num_constraints):
@@ -85,7 +94,7 @@ def MMFFQS(labels, pdist_vec, num_constraints):
   num_class = np.unique(labels).size
   N = labels.size
   
-  paffinity_vec = affinity(pdist_vec)
+  paff_vec = affinity(pdist_vec)
 
   constraint_mat, clus_label = FFQS(labels, pdist_vec, num_constraints)
   constraint_mat.astype('int')  
@@ -96,24 +105,36 @@ def MMFFQS(labels, pdist_vec, num_constraints):
 
   clus = np.unique(np.setdiff1d(clus_label,[0]))
   while query_cnt < num_constraints:
+
     candidate_ind = np.setdiff1d(all_ind, skeleton_ind)
     if candidate_ind.size > 0:
       cand_sim_to_skele = np.max(pdist_block(paff_vec, skeleton_ind, candidate_ind), axis=0)  
       q_ind = np.argmin(cand_sim_to_skele)
       q = candidate_ind[q_ind]
+
     else:
       q = np.random.random_integers(0,N-1,1)
+
     num_clus = clus.size
     sim_vec = np.zeros(num_clus)
-    ind_vec = np.zeros(num_clus)
+    ind_vec = np.zeros(num_clus).astype(int)
     for k in range(num_clus):
       ind_k = all_ind[clus_label == clus[k]]
-      sim_ind = np.argmax(pdist_block(paff_vec, q, ind_k))
+      sim_ind = np.argmax(pdist_block(paff_vec, q, ind_k), axis=0)
+      print('--------')
+      print(q)
+      print(ind_k)
+      print(sim_ind)
+      print('--------')
       sim_vec[k] = pdist_block(paff_vec, q, ind_k)[sim_ind]
       ind_vec[k] = ind_k[sim_ind]
+
     sort_ind = np.argsort(-sim_vec)
     ind_vec = ind_vec[sort_ind]
     for k in range(num_clus):
+      print(q)
+      print(k)
+      print(ind_vec)
       link = labels[q] == labels[ind_vec[k]]
       constraint_mat[query_cnt,:] = [q, ind_vec[k], link]
       query_cnt += 1
@@ -126,7 +147,7 @@ def MMFFQS(labels, pdist_vec, num_constraints):
         break
     skeleton_ind = np.append(skeleton_ind, q)
   
-  return constraint_mat[:,0:2], clus_label
+  return constraint_mat[:,:2], clus_label
 
 
 class ActiveClassDiscovery:
@@ -176,11 +197,6 @@ class ActiveClassDiscovery:
 if __name__ == '__main__':
   N, num_class, Nquery = (300, 6, 20)
   data, labels = ds.make_blobs(n_samples=N, n_features=2, centers=num_class)
-  a = ActiveClassDiscovery(data)
-  trainInd = np.zeros(Nquery).astype(int)
-  for i in range(Nquery):
-    trainInd[i] = a.get_query()
-    plt.figure()
-    plot_labels(data)
-    plot_labels(data[trainInd[:i+1]], labels[trainInd[:i+1]])
-    plt.show()
+  
+  constraint_mat, _ = get_constraints(labels, pdist(data), method='rand', num_constraints=20, err_rate=0)
+  plot_constraints(data, constraint_mat)

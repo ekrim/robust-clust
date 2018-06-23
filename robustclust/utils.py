@@ -88,7 +88,7 @@ def all_pairwise(labelSet):
   return bigConstraintMat
 
 
-def plot_labels(data,labels=None):
+def plot_labels(data, labels=None):
   """Plot the data colored according to the unique class 
   labels. If no labels are provided, the data is grey.
   """
@@ -117,7 +117,7 @@ def plot_constraints(data, constraint_mat):
      markerfacecolor=[0.7,0.7,0.7],
      markersize=5)
   for cons in constraint_mat:
-    sampPair = cons[0:2]
+    sampPair = cons[:2]
     if cons[2] == 1:
       lineType = '-'
     else:

@@ -2,7 +2,11 @@
 under uncertainty.
 
 """
-from .active_learning import FFQS, \
+from .utils import plot_constraints, \
+                   plot_labels 
+
+from .active_learning import get_constraints, \
+                             FFQS, \
                              MMFFQS, \
                              ActiveClassDiscovery
 
@@ -12,5 +16,3 @@ from .constrained import E2CP, \
 from .robust import ImperfectOracles, \
                     ConstraintsToLabels
 
-from .utils import plot_constraints, \
-                   plot_labels 
