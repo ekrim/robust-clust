@@ -4,6 +4,12 @@ from scipy.special import binom
 from scipy.spatial.distance import pdist
 
 
+def pdist_block(pdist_vec, i, j):
+  col_ind, row_ind = np.meshgrid(j, i)
+  row_ind, col_ind = row_ind.flatten(), col_ind.flatten()
+  return pdist_vec[pdist_idx(pdist_vec.size, row_ind, col_ind)].reshape((i.size, j.size))
+
+
 def pdist_idx(N, i, j):
   """Get a indices for an array returned by pdist, so we
   can reference it as if it were the full square matrix.

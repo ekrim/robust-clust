@@ -3,116 +3,130 @@ import matplotlib.pyplot as plt
 import sklearn.datasets as ds
 from sklearn.cluster import AgglomerativeClustering
 
-from . import constrained as cc
+from .utils import pdist_idx, pdist_block, affinity
+from robustclust import plot_labels
 
 
-def make_constraints(labels, data=None, method='rand', num_constraints=None, errRate=0):
+def make_constraints(labels, pdist_vec, method='rand', num_constraints=None, err_rate=0):
   N = labels.size
 
-  # Half the number of samples is a good baseline
+  # half the number of samples is a good baseline
   num_constraints = N/2 if num_constraints is None else num_constraints
 
   if method == 'mmffqs':
-    distMat = np.sqrt(squared_distance_matrix(data))
-    queryMat, clusLabel = MMFFQS(labels, distMat, num_constraints)
-    bigConstraintMat = all_pairwise(clusLabel)
+    query_mat, clus_label = MMFFQS(labels, pdist_vec, num_constraints)
+    big_constraint_mat = all_pairwise(clus_label)
 
+  elif method == 'rand':
+    query_mat = np.random.randint(0, N, (num_constraints,2))
+ 
   else:
-    queryMat = np.random.randint(0,N,(num_constraints,2))
+    raise False, 'no such method'
 
-  queryMat = queryMat.astype(int)
-  link = (labels[queryMat[:,0]] == labels[queryMat[:,1]])+0  
-  # The samples whose link values we will invert
-  errorInd = np.random.choice(2,num_constraints,p=[1-errRate,errRate]).astype('bool')  
+  query_mat = query_mat.astype(int)
+  link = (labels[query_mat[:,0]] == labels[query_mat[:,1]])+0  
+
+  # the samples whose link values we will invert
+  error_ind = np.random.choice(2, num_constraints, p=[1-err_rate, err_rate]).astype('bool')  
   link = link.reshape((-1,1))
-  link[errorInd,:] = 2 - np.power(2,link[errorInd,:])
+  link[error_ind,:] = 2 - np.power(2, link[error_ind,:])
 
-  constraintMat = np.append(queryMat,link,axis=1)
-  return constraintMat.astype(int), bigConstraintMat.astype(int)
+  constraint_mat = np.append(query_mat,link,axis=1)
+  return constraint_mat.astype(int), big_constraint_mat.astype(int)
 
 
-def FFQS(labels, distMat, Nclass, Nconstraints):
-  N = distMat.shape[0]
-  nbrLabel = np.zeros(N)
+def FFQS(labels, pdist_vec, num_constraints):
+  """Furthest first query search
+  """
+  num_class = np.unique(labels).size
+  N = labels.size
+
+  nbr_label = np.zeros(N)
   ind = np.arange(N)
-  nbrLabel[np.random.random_integers(0,N-1,1)] = 1
-  querCnt = 0
-  constraintMat = np.zeros((Nconstraints,3))
-  foundAll = False
-  while querCnt < Nconstraints and (not foundAll):
-    nbrInd = ind[nbrLabel > 0]
-    candInd = ind[nbrLabel==0]
-    block = distMat[nbrInd,:][:,candInd]
-    minDist = np.min(block, axis=0)
-    farInd = np.argmax(minDist)
-    newPt = candInd[farInd]
+  nbr_label[np.random.random_integers(0, N-1, 1)] = 1
+  quer_cnt = 0
+  constraint_mat = np.zeros((num_constraints,3))
+  found_all = False
+  while quer_cnt < num_constraints and (not found_all):
+    nbr_ind = ind[nbr_label > 0]
+    cand_ind = ind[nbr_label == 0]
+ 
+    block = pdist_block(pdist_vec, nbr_ind, cand_ind)
+
+    min_dist = np.min(block, axis=0)
+    far_ind = np.argmax(min_dist)
+    new_pt = cand_ind[far_ind]
 
     constraint = False
-    nbrCnt = 1
-    while (not constraint) and (nbrCnt <= np.max(nbrLabel)):
-      thisHood = ind[nbrLabel==nbrCnt]
-      constraint = labels[newPt]==labels[thisHood[0]]
-      if querCnt < Nconstraints:
-        constraintMat[querCnt,:] = [newPt, thisHood[0], constraint]
-      querCnt += 1
-      nbrCnt += 1
+    nbr_cnt = 1
+    while (not constraint) and (nbr_cnt <= np.max(nbr_label)):
+      this_hood = ind[nbr_label == nbr_cnt]
+      constraint = labels[new_pt] == labels[this_hood[0]]
+      if quer_cnt < num_constraints:
+        constraint_mat[quer_cnt,:] = [new_pt, this_hood[0], constraint]
+      quer_cnt += 1
+      nbr_cnt += 1
+
     if constraint:
-      nbrLabel[newPt] = nbrCnt - 1
+      nbr_label[new_pt] = nbr_cnt - 1
     else:  
-      nbrLabel[newPt] = np.max(nbrLabel)+1
-    uniqueNbr = np.setdiff1d(np.unique(nbrLabel),[0])
-    if uniqueNbr.size==Nclass:
-      foundAll = True
-  return constraintMat, nbrLabel
+      nbr_label[new_pt] = np.max(nbr_label) + 1
+
+    unique_nbr = np.setdiff1d(np.unique(nbr_label),[0])
+    if unique_nbr.size == num_class:
+      found_all = True
+
+  return constraint_mat, nbr_label
 
 
-def MMFFQS(labels, distMat, Nconstraints):
-  Nclass = np.unique(labels).size
-  N = distMat.shape[0]
+def MMFFQS(labels, pdist_vec, num_constraints):
+  """minimax furthest first query search
+  """
+  num_class = np.unique(labels).size
+  N = labels.size
   
-  sortDist = np.sort(distMat, axis=1)
-  kernel = 2*np.median(sortDist[:,2])
-  simMat = np.exp(-distMat**2/(2*(kernel**2)))
-  constraintMat, clusLabel = FFQS(labels, distMat, Nclass, Nconstraints)
-  constraintMat.astype('int')  
-  allInd = np.arange(N)
-  exploreConstraints = constraintMat[constraintMat[:,0]!=0, 0:2].astype('int')
-  skeletonInd = np.unique(exploreConstraints.reshape(-1))
-  queryCnt = exploreConstraints.shape[0]
+  paffinity_vec = affinity(pdist_vec)
 
-  clus = np.unique(np.setdiff1d(clusLabel,[0]))
-  while queryCnt < Nconstraints:
-    candidateInd = np.setdiff1d(allInd, skeletonInd)
-    if candidateInd.size > 0:
-      candSimToSkele = np.max(simMat[skeletonInd,:][:,candidateInd], axis=0)  
-      qInd = np.argmin(candSimToSkele)
-      q = candidateInd[qInd]
+  constraint_mat, clus_label = FFQS(labels, pdist_vec, num_constraints)
+  constraint_mat.astype('int')  
+  all_ind = np.arange(N)
+  explore_constraints = constraint_mat[constraint_mat[:,0]!=0, 0:2].astype('int')
+  skeleton_ind = np.unique(explore_constraints.reshape(-1))
+  query_cnt = explore_constraints.shape[0]
+
+  clus = np.unique(np.setdiff1d(clus_label,[0]))
+  while query_cnt < num_constraints:
+    candidate_ind = np.setdiff1d(all_ind, skeleton_ind)
+    if candidate_ind.size > 0:
+      cand_sim_to_skele = np.max(pdist_block(paff_vec, skeleton_ind, candidate_ind), axis=0)  
+      q_ind = np.argmin(cand_sim_to_skele)
+      q = candidate_ind[q_ind]
     else:
       q = np.random.random_integers(0,N-1,1)
-    Nclus = clus.size
-    simVec = np.zeros(Nclus)
-    indVec = np.zeros(Nclus)
-    for k in range(Nclus):
-      ind_k = allInd[clusLabel==clus[k]]
-      simInd = np.argmax(simMat[q, ind_k])
-      simVec[k] = simMat[q, ind_k][simInd]
-      indVec[k] = ind_k[simInd]
-    sortInd = np.argsort(-simVec)
-    indVec = indVec[sortInd]
-    for k in range(Nclus):
-      link = labels[q]==labels[indVec[k]]
-      constraintMat[queryCnt,:] = [q, indVec[k], link]
-      queryCnt += 1
+    num_clus = clus.size
+    sim_vec = np.zeros(num_clus)
+    ind_vec = np.zeros(num_clus)
+    for k in range(num_clus):
+      ind_k = all_ind[clus_label == clus[k]]
+      sim_ind = np.argmax(pdist_block(paff_vec, q, ind_k))
+      sim_vec[k] = pdist_block(paff_vec, q, ind_k)[sim_ind]
+      ind_vec[k] = ind_k[sim_ind]
+    sort_ind = np.argsort(-sim_vec)
+    ind_vec = ind_vec[sort_ind]
+    for k in range(num_clus):
+      link = labels[q] == labels[ind_vec[k]]
+      constraint_mat[query_cnt,:] = [q, ind_vec[k], link]
+      query_cnt += 1
       if link:
-        clusLabel[q] = clusLabel[indVec[k]]
+        clus_label[q] = clus_label[ind_vec[k]]
         break
-      if k==Nclus:
-        clusLabel[q] = np.max(clus) + 1
-      if queryCnt==Nconstraints:
+      if k == num_clus:
+        clus_label[q] = np.max(clus) + 1
+      if query_cnt == num_constraints:
         break
-    skeletonInd = np.append(skeletonInd, q)
+    skeleton_ind = np.append(skeleton_ind, q)
   
-  return constraintMat[:,0:2], clusLabel
+  return constraint_mat[:,0:2], clus_label
 
 
 class ActiveClassDiscovery:
@@ -159,14 +173,14 @@ class ActiveClassDiscovery:
       self.mergeHistory += [[clusMem[group1], clusMem[group2]]]
     
 
-if __name__=='__main__':
-  N, Nclass, Nquery = (300, 6, 20)
-  data, labels = ds.make_blobs(n_samples=N, n_features=2, centers=Nclass)
+if __name__ == '__main__':
+  N, num_class, Nquery = (300, 6, 20)
+  data, labels = ds.make_blobs(n_samples=N, n_features=2, centers=num_class)
   a = ActiveClassDiscovery(data)
   trainInd = np.zeros(Nquery).astype(int)
   for i in range(Nquery):
     trainInd[i] = a.get_query()
     plt.figure()
-    cc.plot_labels(data)
-    cc.plot_labels(data[trainInd[:i+1]], labels[trainInd[:i+1]])
+    plot_labels(data)
+    plot_labels(data[trainInd[:i+1]], labels[trainInd[:i+1]])
     plt.show()
