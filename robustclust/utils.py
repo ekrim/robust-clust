@@ -88,40 +88,44 @@ def all_pairwise(labelSet):
   return bigConstraintMat
 
 
-def plot_labels(data, labels=None):
-  """Plot the data colored according to the unique class 
-  labels. If no labels are provided, the data is grey.
-  """
-  if labels is not None:
-    classes = set(labels)
-    colors = plt.cm.Spectral(np.linspace(0,1,len(classes)))
-    for lab, col in zip(classes, colors):
-      ind = labels == lab
-      plt.plot(data[ind,0], data[ind,1], 'o', 
-          markerfacecolor=col, 
-          markersize=10)
-  else:
+def plot_constraints(data, labels=None, constraint_mat=None):
+  """Plot the data and possibly labels and/or pairwise constraints. 
+  ML constraints will be solid lines, while CL constraints will be 
+  dashed lines.
+
+    Args:
+      data: (N,D) ndarray of the data
+      labels: array of class labels
+      constraint_mat: (num_constraints, 3) ndarray, where each row
+                      is (index of sample 1, index of sample 2, 
+                      constraint type), where constraint type is 1
+                      for must-link, -1 for cannot-link
+
+  """    
+  marker_size = 7
+  if labels is None:
     plt.plot(data[:,0], data[:,1], 'o',
        markerfacecolor=[0.7, 0.7, 0.7],
-       markersize=10)
+       markersize=marker_size)
 
+  else: 
+    classes = set(labels)
+    colors = plt.cm.Spectral(np.linspace(0, 1, len(classes)))
+    for lab, col in zip(classes, colors):
+      ind = labels == lab
+      plt.plot(data[ind, 0], data[ind, 1], 'o', 
+          markerfacecolor=col, 
+          markersize=marker_size)
 
-def plot_constraints(data, constraint_mat):
-  """Plot the data (all grey) and the pairwise 
-  constraints
+  if constraint_mat is not None:
+    for cons in constraint_mat:
+      sampPair = cons[:2]
+      if cons[2] == 1:
+        lineType = '-'
+      else:
+        lineType = '--'
+      plt.plot(data[sampPair,0], data[sampPair,1], lineType,
+         color='black',
+         linewidth=3)
 
-  ML constraints will be solid lines, while CL 
-  constraints will be dashed lines
-  """    
-  plt.plot(data[:,0],data[:,1],'o',
-     markerfacecolor=[0.7,0.7,0.7],
-     markersize=5)
-  for cons in constraint_mat:
-    sampPair = cons[:2]
-    if cons[2] == 1:
-      lineType = '-'
-    else:
-      lineType = '--'
-    plt.plot(data[sampPair,0], data[sampPair,1], lineType,
-       color='black',
-       linewidth=3)
+  plt.show()

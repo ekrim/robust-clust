@@ -2,8 +2,7 @@
 under uncertainty.
 
 """
-from .utils import plot_constraints, \
-                   plot_labels 
+from .utils import plot_constraints
 
 from .active_learning import get_constraints, \
                              FFQS, \

@@ -8,11 +8,9 @@ from .utils import pdist_idx, \
                    pdist_block, \
                    affinity, \
                    all_pairwise
-from robustclust import plot_labels, \
-                        plot_constraints
 
 
-def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=0):
+def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=0, **kwargs):
   N = labels.size
 
   pdist_vec = pdist(data)
@@ -21,9 +19,8 @@ def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=
   num_constraints = N/2 if num_constraints is None else num_constraints
 
   if method == 'acd':
-    query_mat = active_class_discovery(data)
+    query_mat = active_class_discovery(data, num_constraints, **kwargs)
     big_constraint_mat = None
-    print(query_mat)
 
   elif method == 'mmffqs':
     query_mat, clus_label = MMFFQS(pdist_vec, labels, num_constraints)
@@ -53,7 +50,7 @@ def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=
 
 
 def FFQS(pdist_vec, labels, num_constraints):
-  """Furthest first query search
+  """farthest-first query search
   """
   num_class = np.unique(labels).size
   N = labels.size
@@ -97,7 +94,7 @@ def FFQS(pdist_vec, labels, num_constraints):
 
 
 def MMFFQS(pdist_vec, labels, num_constraints):
-  """minimax furthest first query search
+  """minimax farthest first query search
   """
   num_class = np.unique(labels).size
   N = labels.size
@@ -150,44 +147,43 @@ def MMFFQS(pdist_vec, labels, num_constraints):
   return constraint_mat[:,:2], clus_label
 
 
-def active_class_discovery(data, known_ind=None):
+def active_class_discovery(data, num_constraints, min_samples=None):
+  """Active Class Discovery (ACD) proposed by me
+
+  Args:
+    data: (N, D) ndarray with the data
+    num_constraints: number of query pairs to acquire
+    min_samples: minimum number of samples in a merge to query
+
+  Returns:
+    query_mat: (num_constraints, 2) ndarray of query pair indices
+
+  """
   N = data.shape[0]
   agg = AgglomerativeClustering(linkage='average')
   agg.fit(data)
 
   merge_history = []
   clus_mem = [np.asarray([x]) for x in range(N)]
-  for i in range(0, N-1):
-    group1 = agg.children_[i,0]
-    group2 = agg.children_[i,1]
+  merge_size = np.zeros(N-1)
+  for i in range(N-1):
+    group1 = agg.children_[i, 0]
+    group2 = agg.children_[i, 1]
     clus_mem += [np.append(clus_mem[group1], clus_mem[group2])]
     merge_history += [[clus_mem[group1], clus_mem[group2]]]
+    merge_size[i] = min(len(clus_mem[group1]), len(clus_mem[group2]))
   
-  known_labels = -np.ones(N)
-  if known_ind is not None:
-    known_labels[known_ind] = 1      
-
-  num_of_empties = np.zeros((N-1, 2))
-  for i in range(N-1):
-    ind1 = merge_history[i][0]
-    ind2 = merge_history[i][1]
-    
-    lab1 = np.unique(known_labels[ind1])
-    lab2 = np.unique(known_labels[ind2])
-
-    if not np.any(lab1 != -1):
-      num_of_empties[i,0] = ind1.size
-
-    if not np.any(lab2 != -1):
-      num_of_empties[i,1] = ind2.size  
-
-  best_sides = np.argmax(num_of_empties, axis=1)
-  biggest_empty = np.argmax(num_of_empties[np.arange(N-1), best_sides])    
-  empty_side = best_sides[biggest_empty]
+  select_idx = np.argsort(-merge_size) 
+  if min_samples is not None:
+    select_idx = select_idx[merge_size[select_idx] >= min_samples]
   
-  query_group = merge_history[biggest_empty][empty_side] 
-  best_sample = np.random.randint(query_group.size)
-  new_query = query_group[best_sample]
-  known_labels[new_query] = 1
+  query_mat = np.zeros((num_constraints, 2))
+  select_idx = select_idx[:num_constraints]
+  for i, idx in enumerate(select_idx):
+    group1, group2 = merge_history[idx]
+    query_mat[i] = [np.random.choice(group1), np.random.choice(group2)]
 
-  return new_query  
+  if num_constraints > select_idx.size:
+    query_mat[select_idx.size:] = np.random.randint(0, data.shape[0], (num_constraints - select_idx.size, 2))
+  
+  return query_mat.astype(int)
