@@ -12,6 +12,6 @@ from .active_learning import get_constraints, \
 from .constrained import E2CP, \
                          SpectralLearning
 
-from .robust import ImperfectOracles, \
+from .robust import remove_constraints, \
                     ConstraintsToLabels
 

@@ -103,6 +103,62 @@ def all_pairwise(label_set):
   return big_constraint_mat
 
 
+def determine_relevance(cons_mat, labs):
+  vote_eligible = np.zeros((cons_mat.shape[0], cons_mat.shape[0])).astype(int)
+  for i, cons in enumerate(cons_mat):
+    clus1, clus2 = labs[cons[0]], labs[cons[1]]
+    col1 = labs[cons_mat[:,0]][:,None]
+    col2 = labs[cons_mat[:,1]][:,None]
+    labs_of_cons = np.concatenate([col1, col2], axis=1)
+
+    n_matches1 = np.sum(labs_of_cons == np.asarray([clus1, clus2])[None,:], axis=1)
+    n_matches2 = np.sum(labs_of_cons == np.asarray([clus2, clus1])[None,:], axis=1)
+    n_matches = np.maximum(n_matches1, n_matches2)
+
+    if cons[2] == 1:
+      valid_ind = n_matches == 2
+    else:
+      valid_ind = n_matches >= 1
+
+    vote_eligible[i, valid_ind] = 1    
+
+  return vote_eligible
+
+
+def find_errors(labels, constraint_mat):
+  true_conn_mat = (labels[:,None] == labels[None,:]).astype(int)
+  true_cons = true_conn_mat[constraint_mat[:,0], constraint_mat[:,1]]
+  err_ind = true_cons != constraint_mat[:,2]
+  return err_ind
+
+
+def plot_removal(data, labels, keep_ind, constraint_mat):
+  err_ind = find_errors(labels, constraint_mat)
+
+  # The ones we kept
+  plt.subplot(2,2,1)
+  plot_constraints(data, labels=labels)
+  plt.title('True grouping')    
+
+  # Errors
+  plt.subplot(2,2,2)
+  plot_constraints(data, constraint_mat=constraint_mat[err_ind,:])
+  plt.title('Oracle errors')
+  
+  # Good ones we removed
+  plt.subplot(2,2,3)
+  toss_ind = np.logical_not(keep_ind)
+  correct_ind = np.logical_not(err_ind)
+  correct_tossed = np.logical_and(toss_ind, correct_ind)
+  plot_constraints(data, constraint_mat=constraint_mat[correct_tossed,:])
+  plt.title('Correct constraints removed')    
+
+  # Errors we left
+  plt.subplot(2,2,4)
+  plot_constraints(data, constraint_mat=constraint_mat[np.logical_and(keep_ind, err_ind),:])  
+  plt.title('Errors remaining')
+
+
 def plot_constraints(data, labels=None, constraint_mat=None):
   """Plot the data and possibly labels and/or pairwise constraints. 
   ML constraints will be solid lines, while CL constraints will be 
@@ -129,8 +185,7 @@ def plot_constraints(data, labels=None, constraint_mat=None):
     for lab, col in zip(classes, colors):
       ind = labels == lab
       plt.plot(data[ind, 0], data[ind, 1], 'o', 
-          markerfacecolor=col, 
-          markersize=marker_size)
+        markerfacecolor=col, markersize=marker_size)
 
   if constraint_mat is not None:
     for cons in constraint_mat:
@@ -139,8 +194,7 @@ def plot_constraints(data, labels=None, constraint_mat=None):
         lineType = '-'
       else:
         lineType = '--'
-      plt.plot(data[sampPair,0], data[sampPair,1], lineType,
-         color='black',
-         linewidth=3)
+      plt.plot(data[sampPair,0], data[sampPair,1], 
+         lineType, color='black', linewidth=3)
 
   plt.show()

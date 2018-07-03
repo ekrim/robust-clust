@@ -24,11 +24,11 @@ def get_constraints(data, labels, method='rand', n_constraints=None, err_rate=0,
 
   elif method == 'mmffqs':
     query_mat, clus_label = MMFFQS(pdist_vec, labels, n_constraints)
-    big_constraint_mat = all_pairwise(clus_label)
+    big_constraint_mat = all_pairwise(clus_label).astype(int)
 
   elif method == 'ffqs':
     query_mat, clus_label = FFQS(pdist_vec, labels, n_constraints)
-    big_constraint_mat = all_pairwise(clus_label)
+    big_constraint_mat = all_pairwise(clus_label).astype(int)
 
   elif method == 'rand':
     query_mat = np.random.randint(0, N, (n_constraints,2))
