@@ -10,28 +10,28 @@ from .utils import pdist_idx, \
                    all_pairwise
 
 
-def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=0, **kwargs):
+def get_constraints(data, labels, method='rand', n_constraints=None, err_rate=0, **kwargs):
   N = labels.size
 
   pdist_vec = pdist(data)
 
   # half the number of samples is a good baseline
-  num_constraints = N/2 if num_constraints is None else num_constraints
+  n_constraints = N/2 if n_constraints is None else n_constraints
 
   if method == 'acd':
-    query_mat = active_class_discovery(data, num_constraints, **kwargs)
+    query_mat = active_class_discovery(data, n_constraints, **kwargs)
     big_constraint_mat = None
 
   elif method == 'mmffqs':
-    query_mat, clus_label = MMFFQS(pdist_vec, labels, num_constraints)
+    query_mat, clus_label = MMFFQS(pdist_vec, labels, n_constraints)
     big_constraint_mat = all_pairwise(clus_label)
 
   elif method == 'ffqs':
-    query_mat, clus_label = FFQS(pdist_vec, labels, num_constraints)
+    query_mat, clus_label = FFQS(pdist_vec, labels, n_constraints)
     big_constraint_mat = all_pairwise(clus_label)
 
   elif method == 'rand':
-    query_mat = np.random.randint(0, N, (num_constraints,2))
+    query_mat = np.random.randint(0, N, (n_constraints,2))
     big_constraint_mat = None
   
   else:
@@ -41,7 +41,7 @@ def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=
   link = (labels[query_mat[:,0]] == labels[query_mat[:,1]])+0  
 
   # the samples whose link values we will invert
-  error_ind = np.random.choice(2, num_constraints, p=[1-err_rate, err_rate]).astype('bool')  
+  error_ind = np.random.choice(2, n_constraints, p=[1-err_rate, err_rate]).astype('bool')  
   link = link.reshape((-1,1))
   link[error_ind,:] = 2 - np.power(2, link[error_ind,:])
 
@@ -49,7 +49,7 @@ def get_constraints(data, labels, method='rand', num_constraints=None, err_rate=
   return constraint_mat.astype(int), big_constraint_mat
 
 
-def FFQS(pdist_vec, labels, num_constraints):
+def FFQS(pdist_vec, labels, n_constraints):
   """farthest-first query search
   """
   num_class = np.unique(labels).size
@@ -59,9 +59,9 @@ def FFQS(pdist_vec, labels, num_constraints):
   ind = np.arange(N)
   nbr_label[np.random.randint(N)] = 1
   quer_cnt = 0
-  constraint_mat = np.zeros((num_constraints,3))
+  constraint_mat = np.zeros((n_constraints,3))
   found_all = False
-  while quer_cnt < num_constraints and (not found_all):
+  while quer_cnt < n_constraints and (not found_all):
     nbr_ind = ind[nbr_label > 0]
     cand_ind = ind[nbr_label == 0]
  
@@ -76,7 +76,7 @@ def FFQS(pdist_vec, labels, num_constraints):
     while (not constraint) and (nbr_cnt <= np.max(nbr_label)):
       this_hood = ind[nbr_label == nbr_cnt]
       constraint = labels[new_pt] == labels[this_hood[0]]
-      if quer_cnt < num_constraints:
+      if quer_cnt < n_constraints:
         constraint_mat[quer_cnt,:] = [new_pt, this_hood[0], constraint]
       quer_cnt += 1
       nbr_cnt += 1
@@ -93,7 +93,7 @@ def FFQS(pdist_vec, labels, num_constraints):
   return constraint_mat, nbr_label
 
 
-def MMFFQS(pdist_vec, labels, num_constraints):
+def MMFFQS(pdist_vec, labels, n_constraints):
   """minimax farthest first query search
   """
   num_class = np.unique(labels).size
@@ -101,7 +101,7 @@ def MMFFQS(pdist_vec, labels, num_constraints):
   
   paff_vec = affinity(pdist_vec)
 
-  constraint_mat, clus_label = FFQS(pdist_vec, labels, num_constraints)
+  constraint_mat, clus_label = FFQS(pdist_vec, labels, n_constraints)
   constraint_mat.astype('int')  
   all_ind = np.arange(N)
   explore_constraints = constraint_mat[constraint_mat[:,0] != 0, 0:2].astype('int')
@@ -109,7 +109,7 @@ def MMFFQS(pdist_vec, labels, num_constraints):
   query_cnt = explore_constraints.shape[0]
 
   clus = np.unique(np.setdiff1d(clus_label,[0]))
-  while query_cnt < num_constraints:
+  while query_cnt < n_constraints:
 
     candidate_ind = np.setdiff1d(all_ind, skeleton_ind)
     if candidate_ind.size > 0:
@@ -140,23 +140,23 @@ def MMFFQS(pdist_vec, labels, num_constraints):
         break
       if k == num_clus:
         clus_label[q] = np.max(clus) + 1
-      if query_cnt == num_constraints:
+      if query_cnt == n_constraints:
         break
     skeleton_ind = np.append(skeleton_ind, q)
   
   return constraint_mat[:,:2], clus_label
 
 
-def active_class_discovery(data, num_constraints, min_samples=None):
+def active_class_discovery(data, n_constraints, min_samples=None):
   """Active Class Discovery (ACD) proposed by me
 
   Args:
     data: (N, D) ndarray with the data
-    num_constraints: number of query pairs to acquire
+    n_constraints: number of query pairs to acquire
     min_samples: minimum number of samples in a merge to query
 
   Returns:
-    query_mat: (num_constraints, 2) ndarray of query pair indices
+    query_mat: (n_constraints, 2) ndarray of query pair indices
 
   """
   N = data.shape[0]
@@ -177,13 +177,13 @@ def active_class_discovery(data, num_constraints, min_samples=None):
   if min_samples is not None:
     select_idx = select_idx[merge_size[select_idx] >= min_samples]
   
-  query_mat = np.zeros((num_constraints, 2))
-  select_idx = select_idx[:num_constraints]
+  query_mat = np.zeros((n_constraints, 2))
+  select_idx = select_idx[:n_constraints]
   for i, idx in enumerate(select_idx):
     group1, group2 = merge_history[idx]
     query_mat[i] = [np.random.choice(group1), np.random.choice(group2)]
 
-  if num_constraints > select_idx.size:
-    query_mat[select_idx.size:] = np.random.randint(0, data.shape[0], (num_constraints - select_idx.size, 2))
+  if n_constraints > select_idx.size:
+    query_mat[select_idx.size:] = np.random.randint(0, data.shape[0], (n_constraints - select_idx.size, 2))
   
   return query_mat.astype(int)
