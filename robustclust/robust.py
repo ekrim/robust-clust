@@ -16,7 +16,9 @@ from sklearn.cluster import KMeans, \
 
 from .utils import find_errors, \
                    affinity, \
-                   determine_relevance
+                   determine_relevance, \
+                   plot_constraints, \
+                   translate_to_counting_numbers
 
 
 """Given a set of constraints and a dataset, determine
@@ -32,24 +34,23 @@ constraints which should be kept.
 """
   
 def remove_constraints(data, constraint_mat, threshold=0.8, n_clusters=None, n_it=11):  
+
+  clusterers_in_ensemble = ['kmeans', 'spectral', 'meanshift', 'agglom']
+
   n_cons = constraint_mat.shape[0]
-  
   vote_mat = np.zeros((n_cons, n_cons)) > 0
   satisfied_constraints = np.zeros(n_cons) > 0
     
   CL = constraint_mat[constraint_mat[:,2] == 0, :2]
   ML = constraint_mat[constraint_mat[:,2] == 1, :2]
-  for i in range(4):
-    representation = data
-    if i==0: 
-      clus = KMeans(n_clusters=n_clusters)
-    elif i==1:
+
+  for method in clusterers_in_ensemble:
+    clus = get_clusterer(n_clusters, method)
+     
+    if method == 'spectral':
       representation = squareform(affinity(pdist(data)))
-      clus = SpectralClustering(n_clusters=n_clusters, affinity='precomputed')  
-    elif i==2:
-      clus = MeanShift()
-    elif i==3:
-      clus = AgglomerativeClustering(n_clusters=n_clusters, linkage='average')
+    else:
+      representation = data
 
     labs = clus.fit_predict(representation)
     vote_eligible = determine_relevance(constraint_mat, labs)
@@ -103,6 +104,11 @@ class ConstraintsToLabels:
        from the parent class
   """
   def __init__(self, classifier='svm'): 
+    """
+    Args:
+      classifier: one o
+
+    """
     self.classifier = classifier
     self.hierarchical = AgglomerativeClustering(linkage='average')
 
@@ -126,14 +132,9 @@ class ConstraintsToLabels:
 
     # Use a simple kNN classifier with the converted pairwise
     # constraints to return a clustering for the data
-    
-    if self.classifier == 'knn':
-      clf = KNeighborsClassifier(n_neighbors=1)
-    elif self.classifier == 'svm':
-      clf = svm.SVC(decision_function_shape='ovr')
-    elif self.classifier == 'forest':
-      clf = RandomForestClassifier(n_estimators=25)
-    if np.unique(self.label_set).size==1:
+    clf = get_classifier(self.classifier)
+
+    if np.unique(self.label_set).size == 1:
       print(self.CL.shape[0], 'CL constraints, not enough')
     clf.fit(self.data[self.constrained_samps,:], self.label_set)
     self.labels = clf.predict(self.data)
@@ -146,104 +147,112 @@ class ConstraintsToLabels:
     between nodes, and group nodes to produce a proper label set for 
     the constrained samples.
     """
-    uniqueLabels = np.unique(self.label_set)
-    NuniqueLabels = uniqueLabels.size
+    unique_labels = np.unique(self.label_set)
+    n_unique_labels = unique_labels.size
     
-    groupCenters = np.zeros((NuniqueLabels,self.data.shape[1]))
-    groupPop = np.zeros((NuniqueLabels,1))
-    # simMat contains the Nml - Ncl net constraint value
-    self.simMat = np.zeros((NuniqueLabels,NuniqueLabels))
+    group_centers = np.zeros((n_unique_labels, self.data.shape[1]))
+    group_pop = np.zeros((n_unique_labels, 1))
+    # sim_mat contains the n_ml - n_cl net constraint value
+    self.sim_mat = np.zeros((n_unique_labels, n_unique_labels))
     # Loop over the node labels
-    storeGroups = []
-    for i in range(NuniqueLabels):
+    store_groups = []
+    for i in range(n_unique_labels):
       group1 = self.constrained_samps[self.label_set==i]
-      storeGroups += [group1]
+      store_groups += [group1]
 
-      groupCenters[i,:] = np.mean(self.data[group1,:], axis=0)
-      groupPop[i] = group1.size
-      if i < (NuniqueLabels-1):
+      group_centers[i,:] = np.mean(self.data[group1,:], axis=0)
+      group_pop[i] = group1.size
+      if i < (n_unique_labels-1):
         # Loop over all other nodes
-        for ii in range(i+1,NuniqueLabels):
+        for ii in range(i+1, n_unique_labels):
           group2 = self.constrained_samps[self.label_set==ii]
-          Ncl = self.number_of_constraints(group1,group2,0)
-          Nml = self.number_of_constraints(group1,group2,1)
-          val = Nml - Ncl
-          self.simMat[i,ii] = val
-          self.simMat[ii,i] = val
-    #Nneigh = 2
-    #if groupCenters.shape[0] > (Nneigh*2):
-    #  self.complete_matrix(groupCenters, 2)
+          n_cl = self.number_of_constraints(group1, group2, 0)
+          n_ml = self.number_of_constraints(group1, group2, 1)
+          val = n_ml - n_cl
+          self.sim_mat[i,ii] = val
+          self.sim_mat[ii,i] = val
+    #n_neigh = 2
+    #if group_centers.shape[0] > (n_neigh*2):
+    #  self.complete_matrix(group_centers, 2)
 
-    #self.plot_graph_cut_problem(groupCenters, groupPop)
+    #self.plot_graph_cut_problem(group_centers, group_pop)
     
-    centerDists = cc.squared_distance_matrix(groupCenters)
-    return self.graph_cut_approx(centerDists, storeGroups)
+    center_dists = squareform(pdist(group_centers))
+    return self.graph_cut_approx(center_dists, store_groups)
 
-  def graph_cut_approx(self, centerDists, storeGroups):
+  def graph_cut_approx(self, center_dists, store_groups):
     """Find which of the nodes will merge based on the +/- constraint
     values between nodes. This is a very simple implementation, and will
     not produce a proper graph cut solution. Basically, we just merge
     two nodes if there is a net positive ML between them.
     """
-    Nnodes = self.simMat.shape[0]
-    new_labels = np.arange(Nnodes)
-    Ngroups = Nnodes
+    n_nodes = self.sim_mat.shape[0]
+    new_labels = np.arange(n_nodes)
+    n_groups = n_nodes
     
-    self.simMat += np.diag(-np.inf*np.ones(Nnodes))    
-    keepLooping = True
-    while keepLooping:
-      maxInd = np.argmax(self.simMat) 
-      r, c = np.unravel_index(maxInd, self.simMat.shape)
-      maxVal = self.simMat[r,c]
-      correctNclusters = False
+    self.sim_mat += np.diag(-np.inf*np.ones(n_nodes))    
+    keep_looping = True
+    while keep_looping:
+      max_ind = np.argmax(self.sim_mat) 
+      r, c = np.unravel_index(max_ind, self.sim_mat.shape)
+      max_val = self.sim_mat[r,c]
+
+      correct_n_clusters = False
       if self.n_clusters is not None:
-        correctNclusters = self.n_clusters>=Ngroups    
-      if maxVal > 0 and not correctNclusters:
+        correct_n_clusters = self.n_clusters >= n_groups    
+
+      if max_val > 0 and not correct_n_clusters:
         new_labels[new_labels==new_labels[c]] = new_labels[r]
         self.merge_columns(r, c)
-        storeGroups[c] = np.append(storeGroups[c], storeGroups[r])
-        Ngroups -= 1
-      elif self.n_clusters is not None and maxVal >= 0:
-        if maxVal==-np.inf:
-          keepLooping = False
-        elif Ngroups > self.n_clusters:
-          if maxVal==0:
-            r,c = self.break_tie_zero(centerDists)
-          new_labels[new_labels==new_labels[c]] = new_labels[r]
+        store_groups[c] = np.append(store_groups[c], store_groups[r])
+        n_groups -= 1
+
+      elif self.n_clusters is not None and max_val >= 0:
+        if max_val == -np.inf:
+          keep_looping = False
+
+        elif n_groups > self.n_clusters:
+          if max_val == 0:
+            r,c = self.break_tie_zero(center_dists)
+
+          new_labels[new_labels == new_labels[c]] = new_labels[r]
           self.merge_columns(r, c)  
-          storeGroups[c] = np.append(storeGroups[c], storeGroups[r])
-          Ngroups -= 1  
+          store_groups[c] = np.append(store_groups[c], store_groups[r])
+          n_groups -= 1  
+
         else:
-          keepLooping = False
+          keep_looping = False
+
       else:
-        keepLooping = False
+        keep_looping = False
+
     return new_labels
   
   def quick_hist(self, a):
-    binEdges = np.append(np.unique(a), [np.inf])
-    return np.histogram(a, bins=binEdges)
+    bin_edges = np.append(np.unique(a), [np.inf])
+    return np.histogram(a, bins=bin_edges)
   
-  def break_tie_zero(self, centerDists):
+  def break_tie_zero(self, center_dists):
     """This is just an approx because when two centers merge
-    I am not adjusting the centerDists. If it doesn't work we
+    I am not adjusting the center_dists. If it doesn't work we
     can fix it
     """
-    r,c = np.triu_indices(self.simMat.shape[0], 1)
-    zeroInd = self.simMat[r,c]==0  
-    rowZero = r[zeroInd]
-    colZero = c[zeroInd]
-    zeroDists = centerDists[rowZero, colZero]  
-    bestPair = np.argmin(zeroDists)  
-    return rowZero[bestPair], colZero[bestPair]  
+    r,c = np.triu_indices(self.sim_mat.shape[0], 1)
+    zero_ind = self.sim_mat[r,c]==0  
+    row_zero = r[zero_ind]
+    col_zero = c[zero_ind]
+    zero_dists = center_dists[row_zero, col_zero]  
+    best_pair = np.argmin(zero_dists)  
+    return row_zero[best_pair], col_zero[best_pair]  
       
   def merge_columns(self, r, c):
-    self.simMat[c,:] += self.simMat[r,:]
-    self.simMat[:,c] = self.simMat[c,:]
-    self.simMat[r,:] = -np.inf
-    self.simMat[:,r] = -np.inf
-    self.simMat[c,c] = -np.inf
+    self.sim_mat[c,:] += self.sim_mat[r,:]
+    self.sim_mat[:,c] = self.sim_mat[c,:]
+    self.sim_mat[r,:] = -np.inf
+    self.sim_mat[:,r] = -np.inf
+    self.sim_mat[c,c] = -np.inf
     
-  def plot_graph_cut_problem(self, centers, nodeName):
+  def plot_graph_cut_problem(self, centers, node_name):
     """By using the agglomerative property of hierarchical 
     clustering, samples involved in pairwise constraints
     are grouped into an oversegmentation of the data. These
@@ -260,43 +269,43 @@ class ConstraintsToLabels:
     Parameters
     ----------
     centers - matrix containing node locations
-    nodeName - list containing the value that will be placed
+    node_name - list containing the value that will be placed
          in each node 
     """
     plt.figure()
-    uniquePairs = np.triu(self.simMat, k=1)
-    row,col = np.nonzero(uniquePairs)    
+    unique_pairs = np.triu(self.sim_mat, k=1)
+    row,col = np.nonzero(unique_pairs)    
     
     # Plot the constrained samples
-    cc.plot_labels(self.data[self.constrained_samps,:],self.label_set)
+    plot_constraints(self.data[self.constrained_samps,:], labels=self.label_set)
     
     # Plot lines between nodes representing the number and type
     # of constraints between them
-    maxSim = np.max(np.abs(self.simMat[row,col]))
+    max_sim = np.max(np.abs(self.sim_mat[row, col]))
     for r,c in zip(row,col):
-      if self.simMat[r,c] > 0:
-        lineType = '-'
-        lineColor='b'
+
+      if self.sim_mat[r,c] > 0:
+        line_type = '-'
+        line_color='b'
       else:  
-        lineType = '--'
-        lineColor='r'
-      lineThick = np.abs(self.simMat[r,c])
-      lineThick *= 10/maxSim
+        line_type = '--'
+        line_color='r'
+
+      line_thick = np.abs(self.sim_mat[r,c])
+      line_thick *= 10/max_sim
       
-      plt.plot(centers[[r,c],0],centers[[r,c],1],lineType,
-               color=lineColor,
-         linewidth=lineThick)
+      plt.plot(centers[[r,c],0], centers[[r,c],1],
+        line_type, color=line_color, linewidth=line_thick)
 
     # Plot the nodes themselves
     plt.plot(centers[:,0], centers[:,1], 'o', 
-             markersize=20,
-       markerfacecolor=[0.7,0.7,0.7])
+      markersize=20, markerfacecolor=[0.7,0.7,0.7])
     
     # Put the population of the node in the center
-    for i, val in enumerate(nodeName):
+    for i, val in enumerate(node_name):
       plt.text(centers[i,0], centers[i,1], str(val),
-         horizontalalignment='center',
-         verticalalignment='center') 
+        horizontalalignment='center', verticalalignment='center') 
+
     plt.show()
 
   def complete_matrix(self, centers, k):
@@ -309,26 +318,26 @@ class ConstraintsToLabels:
     k - number of nearest neighbors to look for
     """
     assert k >= 1
-    Nnodes = self.simMat.shape[0]
-    nbrs = NearestNeighbors(n_neighbors=k+1, 
-          algorithm='ball_tree').fit(centers)
+    n_nodes = self.sim_mat.shape[0]
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='ball_tree').fit(centers)
     distances, indices = nbrs.kneighbors(centers)
-    oldSimMat = self.simMat.copy()
-    for i in range(self.simMat.shape[0]):
-      neighInd = np.zeros((1,Nnodes)) > 0
-      neighInd[:,indices[i,1:(k+1)]] = True
-      neighInd = (neighInd & (oldSimMat[i,:]==0)).reshape((-1,))
-      self.simMat[i,neighInd] = 1
-      self.simMat[neighInd,i] = 1      
+    old_sim_mat = self.sim_mat.copy()
+
+    for i in range(self.sim_mat.shape[0]):
+      neigh_ind = np.zeros((1, n_nodes)) > 0
+      neigh_ind[:, indices[i, 1:(k+1)]] = True
+      neigh_ind = (neigh_ind & (old_sim_mat[i,:]==0)).flatten()
+      self.sim_mat[i, neigh_ind] = 1
+      self.sim_mat[neigh_ind, i] = 1      
 
   def translate_labels(self, new_labels):
     """We have clustered nodes, so we need to reflect these changes
     in the label_set, which contains our generated labels for the
     constrained samples.
     """ 
-    uniqueLabels = np.unique(self.label_set)
-    for lab in uniqueLabels:
-      self.label_set[self.label_set==lab] = new_labels[lab]
+    unique_labels = np.unique(self.label_set)
+    for lab in unique_labels:
+      self.label_set[self.label_set == lab] = new_labels[lab]
 
   def agglomerate_constrained_samples(self):
     """Given the merges of the hierarchical clustering, iterate 
@@ -345,12 +354,12 @@ class ConstraintsToLabels:
       group1 = merge[0]
       group2 = merge[1]
       
-      allSamps = np.append(group1, group2)  
-      if not self.is_CL_violated(allSamps):  
+      all_samps = np.append(group1, group2)  
+      if not self.is_CL_violated(all_samps):  
         big_label_set[group1] = big_label_set[group2[0]]
         
     new_labels = big_label_set[self.constrained_samps]
-    new_labels = cc.translate_to_counting_numbers(new_labels)
+    new_labels = translate_to_counting_numbers(new_labels)
     self.label_set = new_labels  
 
   def linkage_to_merges(self):
@@ -370,66 +379,20 @@ class ConstraintsToLabels:
       yield [clus_mem[group1], clus_mem[group2]]    
 
 
-if __name__ == '__main__':
-  # Parameters---------------------------------------
-  Nclusters = 4
-  N = 500
-  n_constraints = 500
-  #---------------------------------------------------
-  # Make some synthetic data
-  data, labels = ds.make_blobs(n_samples=N, 
-             n_features=2, 
-                                     centers=Nclusters,
-             center_box=(0,8))
+def get_clusterer(n_clusters, method='kmeans'):
+  clus = { 
+    'kmeans': KMeans(n_clusters=n_clusters),
+    'spectral': SpectralClustering(n_clusters=n_clusters, affinity='precomputed'),
+    'meanshift': MeanShift(),
+    'agglom': AgglomerativeClustering(n_clusters=n_clusters, linkage='average')}
+
+  return clus[method]
+
+
+def get_classifier(method='knn'):
+  clf = {
+    'knn': KNeighborsClassifier(n_neighbors=1),
+    'svm': svm.SVC(decision_function_shape='ovr'),
+    'forest': RandomForestClassifier(n_estimators=25)}
   
-  # Make some constaints  
-  constraint_mat = cc.ConstrainedClustering.make_constraints(labels,
-            n_constraints=n_constraints,
-            errRate=0.0)
-  ML = constraint_mat[constraint_mat[:,2]==1,:]
-  CL = constraint_mat[constraint_mat[:,2]==0,:]
-  constraint_mat = np.concatenate((ML[0:30,:], CL[:50,:]), axis=0)
-
-  # Plot the data along with the constraints
-  plt.figure()
-  cc.ConstrainedClustering.plot_constraints(data, constraint_mat)
-  plt.show()
-  
-  # Turn the pairwise constraints into labeled samples
-  ctlObj = ConstraintsToLabels(data=data, 
-             constraint_mat=constraint_mat, 
-                                     n_clusters=Nclusters)
-  ctlObj.fit_constrained()
-
-  # Now these labels and their associated index can be used
-  # in a classifier instead of clustering
-  trainLabels = ctlObj.label_set
-  trainInd = ctlObj.constrained_samps
-
-  # Plot the resulting data, along with the training samples
-  # that were produced from the pairwise constraints
-  plt.figure()
-  cc.plot_labels(data)
-  cc.plot_labels(data[trainInd,:],trainLabels)  
-  plt.show()
-
-  #-------------------------
-  N, Nclusters, n_constraints, errRate = (200,3,50,0.1)
-  data, labels = ds.make_blobs(
-    n_samples=N, 
-    n_features=2, 
-    centers=Nclusters
-  )
-
-  constraint_mat = cc.ConstrainedClustering.make_constraints(labels,
-            n_constraints=n_constraints,
-            errRate=errRate)  
-  a = ImperfectOracles(data=data,
-           constraint_mat=constraint_mat,
-           n_clusters=Nclusters)
-  keep_ind = a.remove_constraints()
-
-  plt.figure()
-  a.plot_removal(labels, keep_ind)
-  plt.tight_layout()
-  plt.show()
+  return clf[method]
